@@ -43,6 +43,19 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable {
         }
     }
     
+    /// Logo file name in ProviderIcons asset catalog
+    var logoAssetName: String {
+        switch self {
+        case .gemini: return "gemini"
+        case .claude: return "claude"
+        case .codex: return "openai"
+        case .qwen: return "qwen"
+        case .iflow: return "iflow"
+        case .antigravity: return "antigravity"
+        case .vertex: return "vertex"
+        }
+    }
+    
     var color: Color {
         switch self {
         case .gemini: return Color(hex: "4285F4") ?? .blue

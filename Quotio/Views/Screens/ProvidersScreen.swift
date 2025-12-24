@@ -51,9 +51,7 @@ struct ProvidersScreen: View {
                             showingOAuthSheet = true
                         } label: {
                             HStack {
-                                Image(systemName: provider.iconName)
-                                    .foregroundStyle(provider.color)
-                                    .frame(width: 24)
+                                ProviderIcon(provider: provider, size: 24)
                                 
                                 Text(provider.displayName)
                                 
@@ -101,9 +99,7 @@ struct AuthFileRow: View {
     var body: some View {
         HStack(spacing: 12) {
             if let provider = file.providerType {
-                Image(systemName: provider.iconName)
-                    .foregroundStyle(provider.color)
-                    .frame(width: 24)
+                ProviderIcon(provider: provider, size: 24)
             }
             
             VStack(alignment: .leading, spacing: 2) {
@@ -149,9 +145,7 @@ struct OAuthSheet: View {
     
     var body: some View {
         VStack(spacing: 24) {
-            Image(systemName: provider.iconName)
-                .font(.system(size: 48))
-                .foregroundStyle(provider.color)
+            ProviderIcon(provider: provider, size: 48)
             
             Text("Connect \(provider.displayName)")
                 .font(.title2)

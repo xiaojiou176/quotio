@@ -212,7 +212,7 @@ struct ProviderChip: View {
     
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: provider.iconName)
+            ProviderIcon(provider: provider, size: 16)
             Text(provider.displayName)
             if count > 1 {
                 Text("×\(count)")
