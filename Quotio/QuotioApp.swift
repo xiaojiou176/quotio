@@ -12,12 +12,63 @@ import Sparkle
 @main
 struct QuotioApp: App {
     @State private var viewModel = QuotaViewModel()
+    @State private var menuBarSettings = MenuBarSettingsManager.shared
+    @State private var statusBarManager = StatusBarManager.shared
     @AppStorage("autoStartProxy") private var autoStartProxy = false
     @Environment(\.openWindow) private var openWindow
     
     #if canImport(Sparkle)
     private let updaterService = UpdaterService.shared
     #endif
+    
+    private var quotaItems: [MenuBarQuotaDisplayItem] {
+        guard menuBarSettings.showQuotaInMenuBar else { return [] }
+        guard viewModel.proxyManager.proxyStatus.running else { return [] }
+        
+        var items: [MenuBarQuotaDisplayItem] = []
+        
+        for selectedItem in menuBarSettings.selectedItems.prefix(3) {
+            guard let provider = selectedItem.aiProvider else { continue }
+            
+            if let accountQuotas = viewModel.providerQuotas[provider],
+               let quotaData = accountQuotas[selectedItem.accountKey],
+               !quotaData.models.isEmpty {
+                let lowestPercent = quotaData.models.map(\.percentage).min() ?? 0
+                items.append(MenuBarQuotaDisplayItem(
+                    id: selectedItem.id,
+                    providerSymbol: provider.menuBarSymbol,
+                    accountShort: selectedItem.accountKey,
+                    percentage: lowestPercent,
+                    provider: provider
+                ))
+            } else {
+                items.append(MenuBarQuotaDisplayItem(
+                    id: selectedItem.id,
+                    providerSymbol: provider.menuBarSymbol,
+                    accountShort: selectedItem.accountKey,
+                    percentage: -1,
+                    provider: provider
+                ))
+            }
+        }
+        
+        return items
+    }
+    
+    private func updateStatusBar() {
+        statusBarManager.updateStatusBar(
+            items: quotaItems,
+            colorMode: menuBarSettings.colorMode,
+            isRunning: viewModel.proxyManager.proxyStatus.running,
+            showQuota: menuBarSettings.showQuotaInMenuBar,
+            menuContentProvider: {
+                AnyView(
+                    MenuBarView()
+                        .environment(viewModel)
+                )
+            }
+        )
+    }
     
     var body: some Scene {
         Window("Quotio", id: "main") {
@@ -27,17 +78,32 @@ struct QuotioApp: App {
                     if autoStartProxy && viewModel.proxyManager.isBinaryInstalled {
                         await viewModel.startProxy()
                     }
-                    // Check for updates on launch (background)
                     #if canImport(Sparkle)
                     updaterService.checkForUpdatesInBackground()
                     #endif
+                    
+                    updateStatusBar()
+                }
+                .onChange(of: viewModel.proxyManager.proxyStatus.running) {
+                    updateStatusBar()
+                }
+                .onChange(of: viewModel.isLoadingQuotas) {
+                    updateStatusBar()
+                }
+                .onChange(of: menuBarSettings.showQuotaInMenuBar) {
+                    updateStatusBar()
+                }
+                .onChange(of: menuBarSettings.selectedItems) {
+                    updateStatusBar()
+                }
+                .onChange(of: menuBarSettings.colorMode) {
+                    updateStatusBar()
                 }
         }
         .defaultSize(width: 1000, height: 700)
         .commands {
             CommandGroup(replacing: .newItem) { }
             
-            // Check for Updates menu item
             #if canImport(Sparkle)
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates...") {
@@ -46,35 +112,6 @@ struct QuotioApp: App {
                 .disabled(!updaterService.canCheckForUpdates)
             }
             #endif
-        }
-        
-        #if os(macOS)
-        MenuBarExtra {
-            MenuBarView()
-                .environment(viewModel)
-        } label: {
-            MenuBarLabel(
-                isRunning: viewModel.proxyManager.proxyStatus.running,
-                readyAccounts: viewModel.readyAccounts,
-                totalAccounts: viewModel.totalAccounts
-            )
-        }
-        .menuBarExtraStyle(.window)
-        #endif
-    }
-}
-
-// MARK: - Menu Bar Label
-
-struct MenuBarLabel: View {
-    let isRunning: Bool
-    let readyAccounts: Int
-    let totalAccounts: Int
-    
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: isRunning ? "gauge.with.dots.needle.67percent" : "gauge.with.dots.needle.0percent")
-                .symbolRenderingMode(.hierarchical)
         }
     }
 }
@@ -87,7 +124,6 @@ struct ContentView: View {
         @Bindable var vm = viewModel
         
         NavigationSplitView {
-            // Sidebar - automatically gets Liquid Glass
             List(selection: $vm.currentPage) {
                 Section {
                     Label("nav.dashboard".localized(), systemImage: "gauge.with.dots.needle.33percent")
@@ -118,7 +154,6 @@ struct ContentView: View {
                 }
                 
                 Section {
-                    // Status indicator
                     HStack {
                         Circle()
                             .fill(viewModel.proxyManager.proxyStatus.running ? .green : .gray)
@@ -152,7 +187,6 @@ struct ContentView: View {
                 }
             }
         } detail: {
-            // Detail view - standard content area
             switch viewModel.currentPage {
             case .dashboard:
                 DashboardScreen()

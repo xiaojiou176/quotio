@@ -91,6 +91,37 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable {
         case .copilot: return ""
         }
     }
+    
+    /// Short symbol for menu bar display
+    var menuBarSymbol: String {
+        switch self {
+        case .gemini: return "G"
+        case .claude: return "C"
+        case .codex: return "O"
+        case .qwen: return "Q"
+        case .iflow: return "F"
+        case .antigravity: return "A"
+        case .vertex: return "V"
+        case .kiro: return "K"
+        case .copilot: return "CP"
+        }
+    }
+    
+    /// Menu bar icon asset name (nil if should use SF Symbol fallback)
+    var menuBarIconAsset: String? {
+        switch self {
+        case .gemini: return "gemini-menubar"
+        case .claude: return "claude-menubar"
+        case .codex: return "openai-menubar"
+        case .qwen: return "qwen-menubar"
+        case .copilot: return "copilot-menubar"
+        // These don't have custom icons, use SF Symbols
+        case .antigravity: return "antigravity-menubar"
+        case .kiro: return "kiro-menubar"
+        case .iflow: return "iflow-menubar"
+        case .vertex: return "vertex-menubar"
+        }
+    }
 }
 
 // MARK: - Proxy Status

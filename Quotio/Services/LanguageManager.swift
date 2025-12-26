@@ -228,6 +228,17 @@ struct LocalizedStrings {
         "menubar.quit": [.english: "Quit Quotio", .vietnamese: "Thoát Quotio"],
         "menubar.quota": [.english: "Quota Usage", .vietnamese: "Sử dụng hạn mức"],
         
+        // Menu Bar Settings
+        "settings.menubar": [.english: "Menu Bar", .vietnamese: "Thanh Menu"],
+        "settings.menubar.showQuota": [.english: "Show Quota in Menu Bar", .vietnamese: "Hiển thị Quota trên Menu Bar"],
+        "settings.menubar.colorMode": [.english: "Color Mode", .vietnamese: "Chế độ màu"],
+        "settings.menubar.colored": [.english: "Colored", .vietnamese: "Có màu"],
+        "settings.menubar.monochrome": [.english: "Monochrome", .vietnamese: "Trắng đen"],
+        "settings.menubar.selectAccounts": [.english: "Select Accounts to Display", .vietnamese: "Chọn tài khoản hiển thị"],
+        "settings.menubar.selected": [.english: "Displayed", .vietnamese: "Đang hiển thị"],
+        "settings.menubar.noQuotaData": [.english: "No quota data available. Add accounts with quota support.", .vietnamese: "Không có dữ liệu quota. Thêm tài khoản hỗ trợ quota."],
+        "settings.menubar.help": [.english: "Choose which accounts to show in the menu bar. Maximum 3 items will be displayed.", .vietnamese: "Chọn tài khoản muốn hiển thị trên thanh menu. Tối đa 3 mục."],
+        
         // Notifications
         "settings.notifications": [.english: "Notifications", .vietnamese: "Thông báo"],
         "settings.notifications.enabled": [.english: "Enable Notifications", .vietnamese: "Bật thông báo"],
