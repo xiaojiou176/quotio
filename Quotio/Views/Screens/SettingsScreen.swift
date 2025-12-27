@@ -70,6 +70,9 @@ struct SettingsScreen: View {
                 Text("settings.restartForEffect".localized())
             }
             
+            // Appearance
+            AppearanceSettingsSection()
+            
             // Proxy Server - Only in Full Mode
             if modeManager.isFullMode {
                 Section {
@@ -567,6 +570,34 @@ struct MenuBarSettingsSection: View {
             Label("settings.menubar".localized(), systemImage: "menubar.rectangle")
         } footer: {
             Text("settings.menubar.help".localized())
+        }
+    }
+}
+
+// MARK: - Appearance Settings Section
+
+struct AppearanceSettingsSection: View {
+    @State private var appearanceManager = AppearanceManager.shared
+    
+    private var appearanceModeBinding: Binding<AppearanceMode> {
+        Binding(
+            get: { appearanceManager.appearanceMode },
+            set: { appearanceManager.appearanceMode = $0 }
+        )
+    }
+    
+    var body: some View {
+        Section {
+            Picker("settings.appearance.mode".localized(), selection: appearanceModeBinding) {
+                ForEach(AppearanceMode.allCases) { mode in
+                    Label(mode.localizationKey.localized(), systemImage: mode.icon)
+                        .tag(mode)
+                }
+            }
+        } header: {
+            Label("settings.appearance.title".localized(), systemImage: "paintbrush")
+        } footer: {
+            Text("settings.appearance.help".localized())
         }
     }
 }

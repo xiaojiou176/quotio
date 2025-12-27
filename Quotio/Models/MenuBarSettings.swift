@@ -32,6 +32,70 @@ struct MenuBarQuotaItem: Codable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Appearance Mode
+
+/// Appearance mode for the app (light/dark/system)
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+    
+    var id: String { rawValue }
+    
+    var localizationKey: String {
+        switch self {
+        case .system: return "settings.appearance.system"
+        case .light: return "settings.appearance.light"
+        case .dark: return "settings.appearance.dark"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+}
+
+// MARK: - Appearance Settings Manager
+
+/// Manager for appearance settings with persistence
+@MainActor
+@Observable
+final class AppearanceManager {
+    static let shared = AppearanceManager()
+    
+    private let defaults = UserDefaults.standard
+    private let appearanceModeKey = "appearanceMode"
+    
+    /// Current appearance mode
+    var appearanceMode: AppearanceMode {
+        didSet {
+            defaults.set(appearanceMode.rawValue, forKey: appearanceModeKey)
+            applyAppearance()
+        }
+    }
+    
+    private init() {
+        let saved = defaults.string(forKey: appearanceModeKey) ?? AppearanceMode.system.rawValue
+        self.appearanceMode = AppearanceMode(rawValue: saved) ?? .system
+    }
+    
+    /// Apply the current appearance mode to the app
+    func applyAppearance() {
+        switch appearanceMode {
+        case .system:
+            NSApp.appearance = nil
+        case .light:
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 // MARK: - Color Mode
 
 /// Color mode for menu bar quota display

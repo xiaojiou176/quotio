@@ -17,6 +17,7 @@ struct QuotioApp: App {
     @State private var menuBarSettings = MenuBarSettingsManager.shared
     @State private var statusBarManager = StatusBarManager.shared
     @State private var modeManager = AppModeManager.shared
+    @State private var appearanceManager = AppearanceManager.shared
     @State private var showOnboarding = false
     @AppStorage("autoStartProxy") private var autoStartProxy = false
     @Environment(\.openWindow) private var openWindow
@@ -82,6 +83,9 @@ struct QuotioApp: App {
     }
     
     private func initializeApp() async {
+        // Apply saved appearance mode
+        appearanceManager.applyAppearance()
+        
         // Check if onboarding needed
         if !modeManager.hasCompletedOnboarding {
             showOnboarding = true

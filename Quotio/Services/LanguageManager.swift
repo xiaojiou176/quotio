@@ -447,6 +447,14 @@ struct LocalizedStrings {
         "settings.appMode.quotaOnlyNote": [.english: "Proxy server is disabled in Quota Monitor mode", .vietnamese: "Máy chủ proxy bị tắt trong chế độ Theo dõi Quota"],
         "settings.appMode.switchConfirmTitle": [.english: "Switch to Quota Monitor Mode?", .vietnamese: "Chuyển sang chế độ Theo dõi Quota?"],
         "settings.appMode.switchConfirmMessage": [.english: "This will stop the proxy server if running. You can switch back anytime.", .vietnamese: "Điều này sẽ dừng máy chủ proxy nếu đang chạy. Bạn có thể chuyển lại bất cứ lúc nào."],
+        
+        // Appearance Mode
+        "settings.appearance.title": [.english: "Appearance", .vietnamese: "Giao diện"],
+        "settings.appearance.mode": [.english: "Theme", .vietnamese: "Chủ đề"],
+        "settings.appearance.system": [.english: "System", .vietnamese: "Hệ thống"],
+        "settings.appearance.light": [.english: "Light", .vietnamese: "Sáng"],
+        "settings.appearance.dark": [.english: "Dark", .vietnamese: "Tối"],
+        "settings.appearance.help": [.english: "Choose how the app looks. System will automatically match your Mac's appearance.", .vietnamese: "Chọn giao diện cho ứng dụng. Hệ thống sẽ tự động theo giao diện của Mac."],
     ]
     
     static func get(_ key: String, language: AppLanguage) -> String {
