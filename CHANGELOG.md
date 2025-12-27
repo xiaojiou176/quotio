@@ -5,6 +5,29 @@ All notable changes to Quotio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-12-27
+
+### Added
+
+- **Quota-Only Mode**: New app mode for tracking quotas without running proxy server
+- **Cursor Quota Tracking**: Monitor Cursor IDE usage and quota directly
+- **Quota Display Mode**: Choose between showing used or remaining percentage
+- **Direct Provider Authentication**: Read quota from provider auth files (Claude Code, Gemini CLI, Codex CLI)
+- Mode picker onboarding for first-time setup
+
+### Changed
+
+- **Redesigned Quota UI**: New segmented provider control with improved layout
+- **Improved Menu Bar Settings**: Direct toggle with better UX
+- **Better Status Section**: Improved sidebar layout and port display formatting
+- **Improved Mode Picker**: Fixed UI freeze when switching app modes
+
+### Fixed
+
+- UI freeze when switching between Proxy and Quota-Only modes
+- Cursor excluded from manual add options (quota tracking only)
+- Appcast generation with DMG files
+
 ## [0.1.3] - 2025-12-27
 
 ### Fixed
