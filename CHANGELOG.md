@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-01-29
+
 ### Added
 
 - **proxy**: Efficient Atom feed polling for CLIProxyAPI updates (#226)
