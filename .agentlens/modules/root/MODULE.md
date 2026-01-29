@@ -8,7 +8,7 @@
 
 | File | Lines | Large |
 | ---- | ----- | ----- |
-| `Quotio/QuotioApp.swift` | 585 | 📊 |
+| `Quotio/QuotioApp.swift` | 597 | 📊 |
 | `Quotio/Services/AgentConfigurationService.swift` | 1385 | 📊 |
 | `Quotio/Services/AgentDetectionService.swift` | 252 |  |
 | `Quotio/Services/AtomFeedUpdateService.swift` | 511 | 📊 |
@@ -41,7 +41,7 @@
 | `Quotio/Services/WarpService.swift` | 79 |  |
 | `Quotio/ViewModels/AgentSetupViewModel.swift` | 499 |  |
 | `Quotio/ViewModels/LogsViewModel.swift` | 82 |  |
-| `Quotio/ViewModels/QuotaViewModel.swift` | 1806 | 📊 |
+| `Quotio/ViewModels/QuotaViewModel.swift` | 1821 | 📊 |
 | `scripts/capture-screenshots.ts` | 763 | 📊 |
 
 ## Documentation

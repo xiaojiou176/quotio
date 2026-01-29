@@ -47,31 +47,31 @@
 
 > Actual fallback resolution happens at request time in ProxyBridge
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:228)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:236)
 
 > checkForProxyUpgrade() is now called inside startProxy()
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:301)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:309)
 
 > Cursor and Trae are NOT auto-refreshed - user must use "Scan for IDEs" (issue #29)
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:309)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:317)
 
 > Cursor and Trae removed from auto-refresh to address privacy concerns (issue #29)
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1115)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1124)
 
 > Cursor and Trae removed from auto-refresh (issue #29)
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1136)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1146)
 
 > Cursor and Trae require explicit user scan (issue #29)
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1145)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1155)
 
 > Cursor and Trae removed - require explicit scan (issue #29)
 
-### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1198)
+### `NOTE` (Quotio/ViewModels/QuotaViewModel.swift:1209)
 
 > Don't call detectActiveAccount() here - already set by switch operation
 
