@@ -1,10 +1,10 @@
 # Quotio/Services/AgentConfigurationService.swift
 
-[← Back to Module](../modules/Quotio-Services/MODULE.md) | [← Back to INDEX](../INDEX.md)
+[← Back to Module](../modules/root/MODULE.md) | [← Back to INDEX](../INDEX.md)
 
 ## Overview
 
-- **Lines:** 1385
+- **Lines:** 1394
 - **Language:** Swift
 - **Symbols:** 29
 - **Public symbols:** 0
