@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **accounts**: Add disable/enable toggle for provider accounts (#261)
+  - Toggle button in account row with visual feedback (dimmed when disabled)
+  - Persist disabled state locally using UserDefaults
+  - Sync disabled state to backend on proxy startup
+- **proxy**: Auto-restart proxy when settings change (#263)
+  - Automatically restart proxy when routing strategy or other settings change
+- **proxy**: Add workaround to force primary API URL (#264)
+
+### Fixed
+
+- **quota**: Clamp quota percentages to 0-100 range in all fetchers (#274, #275)
+  - Prevents >100% or <0% values from displaying in the UI
+  - Affects: Antigravity, Cursor, Copilot, Warp, Trae, Kiro quota fetchers
+  - Add defensive clamp in StatusBarManager formatPercentage display
+- **opencode**: Add attachment and modalities fields for image support (#273)
+  - Vision-capable models (Claude, Gemini, GPT, Qwen VL) now include required fields
+  - Fixes image attachments not working in OpenCode (Issue #272)
+- **providers**: Use sheet(item:) for custom provider editing (#258)
+  - Fix closure capture issue where editingCustomProvider was nil
+- **build**: Remove duplicate restartProxyIfRunning() declaration
+
 ## [0.7.10] - 2026-01-30
 
 ### Added
