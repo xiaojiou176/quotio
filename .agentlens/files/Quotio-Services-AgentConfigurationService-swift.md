@@ -1,10 +1,10 @@
 # Quotio/Services/AgentConfigurationService.swift
 
-[← Back to Module](../modules/root/MODULE.md) | [← Back to INDEX](../INDEX.md)
+[← Back to Module](../modules/Quotio-Services/MODULE.md) | [← Back to INDEX](../INDEX.md)
 
 ## Overview
 
-- **Lines:** 1394
+- **Lines:** 1410
 - **Language:** Swift
 - **Symbols:** 29
 - **Public symbols:** 0
@@ -39,7 +39,7 @@
 | 984 | fn | generateAmpConfig | (private) | `private func generateAmpConfig(config: AgentCon...` |
 | 1067 | fn | generateOpenCodeConfig | (private) | `private func generateOpenCodeConfig(config: Age...` |
 | 1158 | fn | buildOpenCodeModelConfig | (private) | `private func buildOpenCodeModelConfig(for model...` |
-| 1194 | fn | generateFactoryDroidConfig | (private) | `private func generateFactoryDroidConfig(config:...` |
-| 1264 | fn | fetchAvailableModels | (internal) | `func fetchAvailableModels(config: AgentConfigur...` |
-| 1319 | fn | testConnection | (internal) | `func testConnection(agent: CLIAgent, config: Ag...` |
+| 1210 | fn | generateFactoryDroidConfig | (private) | `private func generateFactoryDroidConfig(config:...` |
+| 1280 | fn | fetchAvailableModels | (internal) | `func fetchAvailableModels(config: AgentConfigur...` |
+| 1335 | fn | testConnection | (internal) | `func testConnection(agent: CLIAgent, config: Ag...` |
 
