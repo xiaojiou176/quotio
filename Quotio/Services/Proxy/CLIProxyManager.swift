@@ -122,6 +122,12 @@ final class CLIProxyManager {
     /// Available upgrade version info.
     private(set) var availableUpgrade: ProxyVersionInfo?
     
+    /// Last time a proxy update check was performed.
+    var lastProxyUpdateCheckDate: Date? {
+        get { UserDefaults.standard.object(forKey: "lastProxyUpdateCheckDate") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "lastProxyUpdateCheckDate") }
+    }
+    
     /// Health monitor task for auto-recovery
     private var healthMonitorTask: Task<Void, Never>?
     
@@ -1361,6 +1367,9 @@ extension CLIProxyManager {
     /// Uses Atom feed with ETag caching for efficient polling.
     /// Falls back to GitHub API only when needed for download URLs.
     func checkForUpgrade() async {
+        // Record when this check was performed
+        lastProxyUpdateCheckDate = Date()
+        
         // Use AtomFeedUpdateService for efficient version checking
         let currentVer = currentVersion ?? installedProxyVersion
         let (latestVersion, isNewer) = await AtomFeedUpdateService.shared.checkForCLIProxyUpdate(currentVersion: currentVer)
@@ -1548,6 +1557,10 @@ extension CLIProxyManager {
         
         // Save the installed version
         saveInstalledVersion(installed.version)
+        
+        // Suppress any future upgrade notifications for this version
+        // This prevents the bug where a notification is shown immediately after upgrading
+        NotificationManager.shared.suppressUpgradeNotification(version: installed.version)
         
         NotificationManager.shared.notifyUpgradeSuccess(version: installed.version)
     }
