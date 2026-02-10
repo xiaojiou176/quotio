@@ -445,18 +445,14 @@ final class QuotaViewModel {
         // Only use CLI fetcher if proxy is not available or in quota-only mode
         // The openAIFetcher handles Codex via proxy auth files
         guard modeManager.isMonitorMode else { return }
-        
+
+        // Skip if OpenAI fetcher already populated codex quotas (avoids duplicate entries
+        // since OpenAIQuotaFetcher keys by filename while CodexCLIFetcher keys by JWT email)
+        if let existing = providerQuotas[.codex], !existing.isEmpty { return }
+
         let quotas = await codexCLIFetcher.fetchAsProviderQuota()
         if !quotas.isEmpty {
-            // Merge with existing codex quotas (from proxy if any)
-            if var existing = providerQuotas[.codex] {
-                for (email, quota) in quotas {
-                    existing[email] = quota
-                }
-                providerQuotas[.codex] = existing
-            } else {
-                providerQuotas[.codex] = quotas
-            }
+            providerQuotas[.codex] = quotas
         }
     }
     

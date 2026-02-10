@@ -22,10 +22,8 @@ final class StatusBarMenuBuilder {
     private let modeManager = OperatingModeManager.shared
     private let menuWidth: CGFloat = 320
     
-    // Selected provider from UserDefaults
+    // Selected provider from UserDefaults (kept for compatibility)
     @AppStorage("menuBarSelectedProvider") private var selectedProviderRaw: String = ""
-    private var showAllAccounts: Bool = false
-    private var suppressResetOnce: Bool = false
     
     init(viewModel: QuotaViewModel) {
         self.viewModel = viewModel
@@ -34,63 +32,48 @@ final class StatusBarMenuBuilder {
     // MARK: - Build Menu
     
     func buildMenu() -> NSMenu {
-        if suppressResetOnce {
-            suppressResetOnce = false
-        } else {
-            showAllAccounts = false
-        }
         let menu = NSMenu()
         menu.autoenablesItems = false
-        
+
         // 1. Header
         menu.addItem(buildHeaderItem())
         menu.addItem(NSMenuItem.separator())
-        
+
         // 2. Network info (Proxy + Tunnel) - Local Proxy Mode only
         if modeManager.isLocalProxyMode {
             menu.addItem(buildNetworkInfoItem())
             menu.addItem(NSMenuItem.separator())
         }
-        
-        // 3. Provider picker + Account cards (individual items for submenu support)
+
+        // 3. All provider accounts shown together, grouped by provider header
         let providers = providersWithData
         if !providers.isEmpty {
-            // Provider picker as separate item with callback to rebuild menu
-            let pickerView = MenuProviderPickerView(providers: providers) {
-                // Rebuild menu in place to show new provider's accounts
-                // Uses StatusBarManager singleton to ensure it works across desktop switches
-                DispatchQueue.main.async {
-                    StatusBarManager.shared.rebuildMenuInPlace()
-                }
-            }
-            menu.addItem(viewItem(for: pickerView))
-            
-            menu.addItem(NSMenuItem.separator())
-            
-            // Account cards as individual items (max 3 + "view more", enables native submenu on hover)
-            let selectedProvider = resolveSelectedProvider(from: providers)
-            let accounts = accountsForProvider(selectedProvider)
+            for (index, provider) in providers.enumerated() {
+                let accounts = accountsForProvider(provider)
 
-            if accounts.isEmpty {
-                menu.addItem(buildEmptyStateItem())
-            } else {
-                let maxVisibleAccounts = 3
-                let displayAccounts = showAllAccounts ? accounts : Array(accounts.prefix(maxVisibleAccounts))
-                for account in displayAccounts {
-                    let cardItem = buildAccountCardItem(
-                        email: account.email,
-                        data: account.data,
-                        provider: selectedProvider
-                    )
-                    menu.addItem(cardItem)
+                // Provider section header
+                let headerView = MenuProviderSectionHeader(provider: provider)
+                menu.addItem(viewItem(for: headerView))
+
+                if accounts.isEmpty {
+                    menu.addItem(buildEmptyStateItem())
+                } else {
+                    for account in accounts {
+                        let cardItem = buildAccountCardItem(
+                            email: account.email,
+                            data: account.data,
+                            provider: provider
+                        )
+                        menu.addItem(cardItem)
+                    }
                 }
 
-                if accounts.count > maxVisibleAccounts {
-                    let remainingCount = showAllAccounts ? 0 : (accounts.count - maxVisibleAccounts)
-                    menu.addItem(buildViewMoreAccountsItem(remainingCount: remainingCount, isExpanded: showAllAccounts))
+                // Separator between provider groups (not after the last one)
+                if index < providers.count - 1 {
+                    menu.addItem(NSMenuItem.separator())
                 }
             }
-            
+
             menu.addItem(NSMenuItem.separator())
         } else {
             menu.addItem(buildEmptyStateItem())
@@ -202,15 +185,6 @@ final class StatusBarMenuBuilder {
         }
 
         return item
-    }
-
-    private func buildViewMoreAccountsItem(remainingCount: Int, isExpanded: Bool) -> NSMenuItem {
-        let view = MenuViewMoreAccountsView(remainingCount: remainingCount, isExpanded: isExpanded) { [self] in
-            self.showAllAccounts.toggle()
-            self.suppressResetOnce = true
-            StatusBarManager.shared.rebuildMenuInPlace()
-        }
-        return viewItem(for: view)
     }
 
     // MARK: - Antigravity Submenu
@@ -360,6 +334,24 @@ private struct MenuHeaderView: View {
 }
 
 
+
+// MARK: - Provider Section Header
+
+private struct MenuProviderSectionHeader: View {
+    let provider: AIProvider
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ProviderIconMono(provider: provider, size: 14)
+            Text(provider.displayName)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+    }
+}
 
 // MARK: - Provider Picker View (separate from accounts list)
 
