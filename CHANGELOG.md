@@ -26,9 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update `expired`/`expires_in`/`timestamp` correctly on Antigravity and OpenAI token refresh
 - **proxy**: Persist upstream proxy URL across restarts (#307) - thanks @ming 🎉
   - Sync proxy URL to CLIProxyAPI config on startup and settings change
-- **keychain**: Align service identifiers with bundle ID and add keychain migration (#306)
-  - Fix inconsistent prefixes (com.quotio, io.quotio) → match PRODUCT_BUNDLE_IDENTIFIER
-  - Transparent migration from old keychain service names so existing users retain credentials
+- **keychain**: Rebrand bundle identifier to `dev.quotio.desktop` with multi-layer keychain migration (#306, #313)
 - **i18n**: Troubleshooting section missing localization (#311) - thanks @darkedge 🎉
   - Replace 4 hardcoded English strings with localization keys
   - Add translations for EN/FR/VI/ZH-Hans
