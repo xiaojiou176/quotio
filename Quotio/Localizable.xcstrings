@@ -11976,6 +11976,422 @@
         }
       }
     },
+    "providers.egress.account.fallback" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "account-%lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账户-%lld"
+          }
+        }
+      }
+    },
+    "providers.egress.alerted" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已告警"
+          }
+        }
+      }
+    },
+    "providers.egress.chip.accounts" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账户数"
+          }
+        }
+      }
+    },
+    "providers.egress.chip.alerted" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "告警数"
+          }
+        }
+      }
+    },
+    "providers.egress.chip.drifted" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drifted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "漂移数"
+          }
+        }
+      }
+    },
+    "providers.egress.chip.inconsistent" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inconsistent"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不一致数"
+          }
+        }
+      }
+    },
+    "providers.egress.drift" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drift %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "漂移 %lld"
+          }
+        }
+      }
+    },
+    "providers.egress.driftUnknown" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drift —"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "漂移 —"
+          }
+        }
+      }
+    },
+    "providers.egress.empty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No account-level egress mapping entries yet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无账户级出口映射条目。"
+          }
+        }
+      }
+    },
+    "providers.egress.footer" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Read-only account to egress observability from /v0/management/egress-mapping."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 /v0/management/egress-mapping 提供只读的账户到出口可观测信息。"
+          }
+        }
+      }
+    },
+    "providers.egress.loading" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading egress mapping..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载出口映射..."
+          }
+        }
+      }
+    },
+    "providers.egress.notLoaded" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Egress mapping not loaded yet. Click refresh."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未加载出口映射，请点击刷新。"
+          }
+        }
+      }
+    },
+    "providers.egress.onlyIssues" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show only alerted/inconsistent accounts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅显示告警/不一致账户"
+          }
+        }
+      }
+    },
+    "providers.egress.onlyIssuesEmpty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No alerted or inconsistent accounts."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有告警或不一致的账户。"
+          }
+        }
+      }
+    },
+    "providers.egress.proxyUnknown" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "proxy#unknown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理#未知"
+          }
+        }
+      }
+    },
+    "providers.egress.redaction" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redaction: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "脱敏策略：%@"
+          }
+        }
+      }
+    },
+    "providers.egress.refresh" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refresh egress mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刷新出口映射"
+          }
+        }
+      }
+    },
+    "providers.egress.status" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状态：%@"
+          }
+        }
+      }
+    },
+    "providers.egress.status.disabled" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disabled"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未启用"
+          }
+        }
+      }
+    },
+    "providers.egress.status.enabled" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enabled"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已启用"
+          }
+        }
+      }
+    },
+    "providers.egress.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Egress Mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出口映射"
+          }
+        }
+      }
+    },
+    "providers.egress.unavailable" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Management API unavailable. Start proxy or connect remote to view egress mapping."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理 API 不可用。请启动代理或连接远端后查看出口映射。"
+          }
+        }
+      }
+    },
+    "providers.gemini.tip.identity" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemini account files may be keyed differently across gateway versions. The same Google account + Project ID can coexist or be treated as a duplicate."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不同网关版本对 Gemini 账户文件的键规则可能不同。同一 Google 账号 + Project ID 可能并存，也可能被视为重复。"
+          }
+        }
+      }
+    },
+    "providers.gemini.tip.keepBoth" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If this is intentional, you can keep both. To reduce duplicates, use a different Google account or Project ID."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果这是预期行为，你可以保留两者。若要减少重复，请使用不同的 Google 账号或 Project ID。"
+          }
+        }
+      }
+    },
+    "providers.gemini.tip.multiCredential" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemini tip: some gateway versions allow multiple credential files for the same Google account + Project ID, while others may treat it as a duplicate. Review existing entries before adding."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemini 提示：某些网关版本允许同一 Google 账号 + Project ID 存在多份凭据文件，另一些版本会视为重复。新增前请先检查现有条目。"
+          }
+        }
+      }
+    },
+    "providers.gemini.tip.potentialDuplicate" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Potential duplicate detected for project \"%@\": %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测到项目“%@”可能存在重复：%@"
+          }
+        }
+      }
+    },
     "providers.addProvider" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -14737,6 +15153,470 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "常规"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.add" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增映射"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.delete.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Namespace \"%@\" will be removed from local mappings and then synced to Management API."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命名空间“%@”将从本地映射中移除，并同步到管理 API。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.delete.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Namespace Mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除命名空间映射"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.addTitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Namespace Mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加命名空间映射"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.baseURLPlaceholder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL (e.g. http://localhost:1456/v1)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL（例如 http://localhost:1456/v1）"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.editTitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit Namespace Mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑命名空间映射"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.mappingSection" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Namespace Mapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命名空间映射"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.modelSetHelp" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter one model per line, or split with commas."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每行一个模型，或使用逗号分隔。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.modelSetSection" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Set"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型集"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.namespacePlaceholder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Namespace (e.g. equilibrium.runtime)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命名空间（例如 equilibrium.runtime）"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.notesPlaceholder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Optional notes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可选备注"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.editor.notesSection" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "备注"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.empty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No namespace mappings configured yet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未配置命名空间映射。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.help" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prework preview for Phase 3: map Base URL namespace to allowed model set."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phase 3 预演：将 Base URL 命名空间映射到允许的模型集合。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.host" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Host: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机：%@"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.invalidHost" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid Host"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无效主机"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.modelCount" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld models"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个模型"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.modelsCount" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Models (%lld)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型（%lld）"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.persistedHelp" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mappings are persisted locally and synced to Management API after each change."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "映射会先保存到本地，并在每次变更后同步到管理 API。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.reseed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reseed From Current Topology"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按当前拓扑重新填充"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.resetDefaults" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Preview Defaults"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置预览默认值"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.syncError" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync failed, local cache kept as fallback: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同步失败，已保留本地缓存作为兜底：%@"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.syncedAt" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last synced: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次同步：%@"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.syncing" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Syncing to Management API..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在同步到管理 API..."
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.syncPending" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending sync to Management API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待同步到管理 API"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hybrid Namespace Model Sets"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hybrid 命名空间模型集"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.validation.baseURL" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL must include a valid scheme and host."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL 必须包含有效的协议和主机。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.validation.modelSet" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model set cannot be empty."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型集不能为空。"
+          }
+        }
+      }
+    },
+    "settings.hybridNamespace.validation.namespace" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Namespace is required."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命名空间不能为空。"
           }
         }
       }

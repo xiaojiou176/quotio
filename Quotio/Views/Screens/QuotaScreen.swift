@@ -5,12 +5,43 @@
 
 import SwiftUI
 
+// MARK: - Sort Option
+
+enum AccountSortOption: String, CaseIterable, Identifiable {
+    case name = "name"
+    case status = "status"
+    case quotaLow = "quotaLow"
+    case quotaHigh = "quotaHigh"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .name: return "quota.sort.name".localized(fallback: "按名称")
+        case .status: return "quota.sort.status".localized(fallback: "按状态")
+        case .quotaLow: return "quota.sort.quotaLow".localized(fallback: "额度低→高")
+        case .quotaHigh: return "quota.sort.quotaHigh".localized(fallback: "额度高→低")
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .name: return "textformat.abc"
+        case .status: return "circle.grid.2x1"
+        case .quotaLow: return "arrow.up.right"
+        case .quotaHigh: return "arrow.down.right"
+        }
+    }
+}
+
 struct QuotaScreen: View {
     @Environment(QuotaViewModel.self) private var viewModel
     @State private var modeManager = OperatingModeManager.shared
 
     @State private var selectedProvider: AIProvider?
     @State private var settings = MenuBarSettingsManager.shared
+    @State private var searchText: String = ""
+    @State private var sortOption: AccountSortOption = .name
     
     // MARK: - Data Sources
     
@@ -148,15 +179,97 @@ struct QuotaScreen: View {
         }
     }
     
+    // MARK: - Health Statistics
+    
+    private var healthStats: (total: Int, ready: Int, cooling: Int, error: Int) {
+        var total = 0
+        var ready = 0
+        var cooling = 0
+        var error = 0
+        
+        // First, try to use authFiles if available (from management API)
+        if !viewModel.authFiles.isEmpty {
+            for file in viewModel.authFiles {
+                total += 1
+                switch file.status {
+                case "ready":
+                    if !file.disabled { ready += 1 }
+                case "cooling":
+                    cooling += 1
+                case "error", "expired":
+                    error += 1
+                default:
+                    // For unknown status, check quota data to infer status
+                    if let providerType = file.providerType,
+                       let quotas = viewModel.providerQuotas[providerType],
+                       let quota = quotas[file.quotaLookupKey] {
+                        if quota.isForbidden {
+                            error += 1
+                        } else if quota.models.allSatisfy({ $0.percentage <= 5 }) {
+                            cooling += 1
+                        } else {
+                            ready += 1
+                        }
+                    } else {
+                        ready += 1 // Assume ready if no data
+                    }
+                }
+            }
+        } else {
+            // Fallback: count accounts from providerQuotas when authFiles is empty
+            for (_, accountQuotas) in viewModel.providerQuotas {
+                for (_, quota) in accountQuotas {
+                    total += 1
+                    if quota.isForbidden {
+                        error += 1
+                    } else if quota.models.allSatisfy({ $0.percentage <= 5 }) {
+                        cooling += 1
+                    } else {
+                        ready += 1
+                    }
+                }
+            }
+        }
+        
+        return (total, ready, cooling, error)
+    }
+    
+    private var healthScore: Int {
+        let stats = healthStats
+        guard stats.total > 0 else { return 0 }
+        
+        // Calculate health score: ready accounts contribute positively, cooling/error negatively
+        let readyRatio = Double(stats.ready) / Double(stats.total)
+        let coolingPenalty = Double(stats.cooling) / Double(stats.total) * 0.3
+        let errorPenalty = Double(stats.error) / Double(stats.total) * 0.5
+        
+        let score = Int((readyRatio - coolingPenalty - errorPenalty) * 100)
+        return max(0, min(100, score))
+    }
+    
     // MARK: - Main Content
     
     private var mainContent: some View {
         VStack(spacing: 0) {
+            // Health Dashboard
+            if viewModel.authFiles.count > 0 {
+                healthDashboard
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
+            }
+            
+            // Search Bar (only show if there are multiple accounts)
+            if viewModel.authFiles.count > 3 {
+                searchBar
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+            }
+            
             // Provider Segmented Control
             if availableProviders.count > 1 {
                 providerSegmentedControl
                     .padding(.horizontal, 24)
-                    .padding(.top, 20)
+                    .padding(.top, 12)
                     .padding(.bottom, 12)
             }
             
@@ -168,7 +281,9 @@ struct QuotaScreen: View {
                         authFiles: viewModel.authFiles.filter { $0.providerType == provider },
                         quotaData: viewModel.providerQuotas[provider] ?? [:],
                         subscriptionInfos: viewModel.subscriptionInfos[provider] ?? [:],
-                        isLoading: viewModel.isLoadingQuotas
+                        isLoading: viewModel.isLoadingQuotas,
+                        searchFilter: searchText,
+                        sortOption: sortOption
                     )
                     .padding(.horizontal, 24)
                     .padding(.vertical, 16)
@@ -183,6 +298,190 @@ struct QuotaScreen: View {
             }
             .scrollContentBackground(.hidden)
         }
+    }
+    
+    // MARK: - Search Bar
+    
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+            
+            TextField("quota.search.placeholder".localized(fallback: "搜索账号..."), text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.subheadline)
+            
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+    }
+    
+    // MARK: - Health Dashboard
+    
+    @State private var isRefreshingAll = false
+    
+    private var healthDashboard: some View {
+        let stats = healthStats
+        let score = healthScore
+        
+        return HStack(spacing: 12) {
+            // Health Score
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.primary.opacity(0.1), lineWidth: 3)
+                        Circle()
+                            .trim(from: 0, to: Double(score) / 100)
+                            .stroke(healthScoreColor(score), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 24, height: 24)
+                    
+                    Text("\(score)%")
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(healthScoreColor(score))
+                }
+                Text("quota.health.score".localized(fallback: "健康度"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 80)
+            
+            Divider()
+                .frame(height: 32)
+            
+            // Stats Grid
+            HStack(spacing: 16) {
+                statItem(
+                    value: stats.ready,
+                    label: "quota.health.ready".localized(fallback: "可用"),
+                    color: .green
+                )
+                
+                statItem(
+                    value: stats.cooling,
+                    label: "quota.health.cooling".localized(fallback: "冷却中"),
+                    color: .orange
+                )
+                
+                statItem(
+                    value: stats.error,
+                    label: "quota.health.error".localized(fallback: "错误"),
+                    color: .red
+                )
+                
+                statItem(
+                    value: stats.total,
+                    label: "quota.health.total".localized(fallback: "总计"),
+                    color: .secondary
+                )
+            }
+            
+            Spacer()
+            
+            // Sort & Batch Actions
+            HStack(spacing: 8) {
+                // Sort Menu
+                Menu {
+                    ForEach(AccountSortOption.allCases) { option in
+                        Button {
+                            sortOption = option
+                        } label: {
+                            HStack {
+                                Image(systemName: option.icon)
+                                Text(option.displayName)
+                                if sortOption == option {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.caption)
+                        Text(sortOption.displayName)
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.1))
+                    .foregroundStyle(.secondary)
+                    .clipShape(Capsule())
+                }
+                .menuStyle(.borderlessButton)
+                
+                // Refresh All Button
+                Button {
+                    Task {
+                        isRefreshingAll = true
+                        await viewModel.refreshQuotasUnified()
+                        isRefreshingAll = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if isRefreshingAll {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(width: 12, height: 12)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption)
+                        }
+                        Text("quota.action.refreshAll".localized(fallback: "全部刷新"))
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.1))
+                    .foregroundStyle(.blue)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isRefreshingAll || viewModel.isLoadingQuotas)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
+    
+    private func healthScoreColor(_ score: Int) -> Color {
+        if score >= 80 { return .green }
+        if score >= 50 { return .orange }
+        return .red
+    }
+    
+    private func statItem(value: Int, label: String, color: Color) -> some View {
+        VStack(alignment: .center, spacing: 2) {
+            Text("\(value)")
+                .font(.headline)
+                .fontWeight(.semibold)
+                .foregroundStyle(value > 0 ? color : .secondary)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(minWidth: 45)
     }
     
     // MARK: - Segmented Control
@@ -340,42 +639,158 @@ private struct ProviderQuotaView: View {
     let quotaData: [String: ProviderQuotaData]
     let subscriptionInfos: [String: SubscriptionInfo]
     let isLoading: Bool
+    var searchFilter: String = ""
+    var sortOption: AccountSortOption = .name
+    
+    private var settings: MenuBarSettingsManager { MenuBarSettingsManager.shared }
     
     /// Get all accounts (from auth files or quota data keys)
     private var allAccounts: [AccountInfo] {
         var accounts: [AccountInfo] = []
+        var seenDisplayNames = Set<String>() // Track by displayName to avoid duplicates
         
-        // From auth files
+        // From auth files (primary source)
         for file in authFiles {
             let key = file.quotaLookupKey
+            let rawEmail = file.email ?? file.name
+            let (cleanName, isTeam) = AccountInfo.extractCleanDisplayName(from: rawEmail, email: file.email)
+            
+            // Skip if we already have this display name (avoid duplicates)
+            let normalizedName = cleanName.lowercased()
+            guard !seenDisplayNames.contains(normalizedName) else { continue }
+            seenDisplayNames.insert(normalizedName)
+            
+            // Try to find quota data with various possible keys
+            let possibleKeys = [key, cleanName, rawEmail, file.name]
+            let matchedQuota = possibleKeys.compactMap { quotaData[$0] }.first
+            let matchedSubscription = possibleKeys.compactMap { subscriptionInfos[$0] }.first
+            
             accounts.append(AccountInfo(
                 key: key,
-                email: file.email ?? file.name,
+                email: rawEmail,
+                displayName: cleanName,
+                isTeamAccount: isTeam,
                 status: file.status,
                 statusColor: file.statusColor,
                 authFile: file,
-                quotaData: quotaData[key],
+                quotaData: matchedQuota,
+                subscriptionInfo: matchedSubscription
+            ))
+        }
+        
+        // From quota data (only if not already added by displayName)
+        for (key, data) in quotaData {
+            let (cleanName, isTeam) = AccountInfo.extractCleanDisplayName(from: key, email: nil)
+            let normalizedName = cleanName.lowercased()
+            
+            // Skip if we already have this display name
+            guard !seenDisplayNames.contains(normalizedName) else { continue }
+            seenDisplayNames.insert(normalizedName)
+            
+            accounts.append(AccountInfo(
+                key: key,
+                email: key,
+                displayName: cleanName,
+                isTeamAccount: isTeam,
+                status: "active",
+                statusColor: .green,
+                authFile: nil,
+                quotaData: data,
                 subscriptionInfo: subscriptionInfos[key]
             ))
         }
         
-        // From quota data (if not already added)
-        let existingKeys = Set(accounts.map { $0.key })
-        for (key, data) in quotaData {
-            if !existingKeys.contains(key) {
-                accounts.append(AccountInfo(
-                    key: key,
-                    email: key,
-                    status: "active",
-                    statusColor: .green,
-                    authFile: nil,
-                    quotaData: data,
-                    subscriptionInfo: subscriptionInfos[key]
-                ))
+        // Apply search filter
+        var filtered = accounts
+        if !searchFilter.isEmpty {
+            let query = searchFilter.lowercased()
+            filtered = accounts.filter { account in
+                account.displayName.lowercased().contains(query) ||
+                account.email.lowercased().contains(query) ||
+                account.key.lowercased().contains(query)
             }
         }
         
-        return accounts.sorted { $0.email < $1.email }
+        // Apply sorting
+        return filtered.sorted { lhs, rhs in
+            switch sortOption {
+            case .name:
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            case .status:
+                // Sort order: ready/active first, then cooling, then error, then other
+                let statusOrder = ["ready": 0, "active": 0, "cooling": 1, "error": 2]
+                let lhsOrder = statusOrder[lhs.status] ?? 3
+                let rhsOrder = statusOrder[rhs.status] ?? 3
+                if lhsOrder != rhsOrder {
+                    return lhsOrder < rhsOrder
+                }
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            case .quotaLow:
+                // Sort by lowest quota percentage first
+                let lhsQuota = getLowestQuotaPercent(for: lhs)
+                let rhsQuota = getLowestQuotaPercent(for: rhs)
+                if lhsQuota != rhsQuota {
+                    return lhsQuota < rhsQuota
+                }
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            case .quotaHigh:
+                // Sort by highest quota percentage first
+                let lhsQuota = getLowestQuotaPercent(for: lhs)
+                let rhsQuota = getLowestQuotaPercent(for: rhs)
+                if lhsQuota != rhsQuota {
+                    return lhsQuota > rhsQuota
+                }
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            }
+        }
+    }
+    
+    /// Get the lowest quota percentage for an account
+    private func getLowestQuotaPercent(for account: AccountInfo) -> Double {
+        guard let data = account.quotaData else { return 100 }
+        let models = data.models.map { (name: $0.name, percentage: $0.percentage) }
+        let total = settings.totalUsagePercent(models: models)
+        return total >= 0 ? total : 100
+    }
+    
+    /// Group accounts by status for organized display
+    private var accountsByStatus: [(status: String, label: String, color: Color, accounts: [AccountInfo])] {
+        let all = allAccounts
+        
+        var ready: [AccountInfo] = []
+        var cooling: [AccountInfo] = []
+        var error: [AccountInfo] = []
+        var other: [AccountInfo] = []
+        
+        for account in all {
+            switch account.status {
+            case "ready", "active":
+                ready.append(account)
+            case "cooling":
+                cooling.append(account)
+            case "error":
+                error.append(account)
+            default:
+                other.append(account)
+            }
+        }
+        
+        var groups: [(status: String, label: String, color: Color, accounts: [AccountInfo])] = []
+        
+        if !ready.isEmpty {
+            groups.append(("ready", "quota.status.ready".localized(fallback: "可用"), .green, ready))
+        }
+        if !cooling.isEmpty {
+            groups.append(("cooling", "quota.status.cooling".localized(fallback: "冷却中"), .orange, cooling))
+        }
+        if !error.isEmpty {
+            groups.append(("error", "quota.status.error".localized(fallback: "错误"), .red, error))
+        }
+        if !other.isEmpty {
+            groups.append(("other", "quota.status.other".localized(fallback: "其他"), .secondary, other))
+        }
+        
+        return groups
     }
     
     var body: some View {
@@ -384,13 +799,44 @@ private struct ProviderQuotaView: View {
                 QuotaLoadingView()
             } else if allAccounts.isEmpty {
                 emptyState
-            } else {
+            } else if allAccounts.count <= 3 {
+                // For small number of accounts, show flat list
                 ForEach(allAccounts, id: \.key) { account in
                     AccountQuotaCardV2(
                         provider: provider,
                         account: account,
                         isLoading: isLoading && account.quotaData == nil
                     )
+                }
+            } else {
+                // For larger number of accounts, group by status
+                ForEach(accountsByStatus, id: \.status) { group in
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Group header
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(group.color)
+                                .frame(width: 8, height: 8)
+                            Text(group.label)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Text("(\(group.accounts.count))")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                        }
+                        .padding(.top, group.status == "ready" ? 0 : 8)
+                        
+                        // Account cards
+                        ForEach(group.accounts, id: \.key) { account in
+                            AccountQuotaCardV2(
+                                provider: provider,
+                                account: account,
+                                isLoading: isLoading && account.quotaData == nil
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -418,11 +864,64 @@ private struct ProviderQuotaView: View {
 
 private struct AccountInfo {
     let key: String
-    let email: String
+    let email: String           // Original email/name for technical operations
+    let displayName: String     // Clean display name (extracted email)
+    let isTeamAccount: Bool     // Whether this is a team account
     let status: String
     let statusColor: Color
     let authFile: AuthFile?
     let quotaData: ProviderQuotaData?
+    
+    /// Extract a clean display name from technical account identifiers
+    static func extractCleanDisplayName(from rawName: String, email: String?) -> (displayName: String, isTeam: Bool) {
+        // If we have a clean email, use it
+        if let email = email, !email.isEmpty, !email.contains("-team"), !email.hasSuffix(".json") {
+            return (email, rawName.lowercased().contains("-team"))
+        }
+        
+        var name = rawName
+        let isTeam = name.lowercased().contains("-team")
+        
+        // Remove .json suffix
+        if name.hasSuffix(".json") {
+            name = String(name.dropLast(5))
+        }
+        
+        // Remove -team suffix
+        if name.lowercased().hasSuffix("-team") {
+            name = String(name.dropLast(5))
+        }
+        
+        // Find email pattern (something with @ in it)
+        if let atRange = name.range(of: "@") {
+            // Find the start of the email (after the last hyphen before @)
+            let beforeAt = name[..<atRange.lowerBound]
+            var emailStart = beforeAt.startIndex
+            if let lastHyphen = beforeAt.lastIndex(of: "-") {
+                emailStart = beforeAt.index(after: lastHyphen)
+            }
+            
+            // Find the end of the email domain
+            let afterAt = name[atRange.upperBound...]
+            var emailEnd = afterAt.endIndex
+            
+            // Check for common patterns that indicate end of domain
+            for pattern in ["-gmail", "-manager", "-project", "-cli"] {
+                if let patternRange = afterAt.range(of: pattern, options: .caseInsensitive) {
+                    emailEnd = patternRange.lowerBound
+                    break
+                }
+            }
+            
+            let extractedEmail = name[emailStart..<emailEnd]
+            if extractedEmail.contains("@") && extractedEmail.count > 3 {
+                return (String(extractedEmail), isTeam)
+            }
+        }
+        
+        return (name, isTeam)
+    }
+    
     let subscriptionInfo: SubscriptionInfo?
 }
 
@@ -454,7 +953,7 @@ private struct AccountQuotaCardV2: View {
     }
     
     private var displayEmail: String {
-        account.email.masked(if: settings.hideSensitiveInfo)
+        account.displayName.masked(if: settings.hideSensitiveInfo)
     }
     
     private var isWarmupEnabled: Bool {
@@ -551,6 +1050,18 @@ private struct AccountQuotaCardV2: View {
                         .font(.headline)
                         .fontWeight(.semibold)
                         .lineLimit(1)
+                    
+                    // Team badge
+                    if account.isTeamAccount {
+                        Text("Team")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.purple)
+                            .clipShape(Capsule())
+                    }
                 }
 
                 // Show token expiry for Kiro accounts

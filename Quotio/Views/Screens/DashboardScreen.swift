@@ -659,10 +659,27 @@ struct DashboardScreen: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 FlowLayout(spacing: 8) {
+                    // Connected providers - clickable to add more accounts
                     ForEach(viewModel.connectedProviders) { provider in
-                        ProviderChip(provider: provider, count: viewModel.authFilesByProvider[provider]?.count ?? 0)
+                        if provider.supportsManualAuth {
+                            Button {
+                                if provider == .vertex {
+                                    isImporterPresented = true
+                                } else {
+                                    viewModel.oauthState = nil
+                                    selectedProvider = provider
+                                }
+                            } label: {
+                                ProviderChipWithAdd(provider: provider, count: viewModel.authFilesByProvider[provider]?.count ?? 0)
+                            }
+                            .buttonStyle(.plain)
+                            .help("dashboard.addMoreAccounts".localized(fallback: "点击添加更多账号"))
+                        } else {
+                            ProviderChip(provider: provider, count: viewModel.authFilesByProvider[provider]?.count ?? 0)
+                        }
                     }
                     
+                    // Disconnected providers - show add button
                     ForEach(viewModel.disconnectedProviders.filter { $0.supportsManualAuth }) { provider in
                         Button {
                             if provider == .vertex {
@@ -916,6 +933,46 @@ struct ProviderChip: View {
         .background(provider.color.opacity(0.15))
         .foregroundStyle(provider.color)
         .clipShape(Capsule())
+    }
+}
+
+// MARK: - Provider Chip With Add Button (for connected providers)
+
+struct ProviderChipWithAdd: View {
+    let provider: AIProvider
+    let count: Int
+    @State private var isHovering = false
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            ProviderIcon(provider: provider, size: 16)
+            Text(provider.displayName)
+            if count > 0 {
+                Text("×\(count)")
+                    .fontWeight(.semibold)
+            }
+            // Show "+" icon on hover or always show a subtle indicator
+            Image(systemName: "plus.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(isHovering ? provider.color : provider.color.opacity(0.5))
+        }
+        .font(.caption)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(provider.color.opacity(isHovering ? 0.25 : 0.15))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(provider.color.opacity(isHovering ? 0.5 : 0), lineWidth: 1)
+        )
+        .foregroundStyle(provider.color)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
     }
 }
 

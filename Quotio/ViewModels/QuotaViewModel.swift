@@ -31,6 +31,7 @@ final class QuotaViewModel {
     @ObservationIgnored private var warmupModelCache: [WarmupAccountKey: (models: [WarmupModelInfo], fetchedAt: Date)] = [:]
     @ObservationIgnored private let warmupModelCacheTTL: TimeInterval = 28800
     @ObservationIgnored private var lastProxyURL: String?
+    @ObservationIgnored private static let baseURLNamespaceModelSetsKey = "persisted.hybrid.baseURLNamespaceModelSets"
     
     /// Request tracker for monitoring API requests through ProxyBridge
     let requestTracker = RequestTracker.shared
@@ -65,6 +66,9 @@ final class QuotaViewModel {
     
     /// Last quota refresh time (for quota-only mode display)
     var lastQuotaRefreshTime: Date?
+    
+    /// Hybrid control plane persistence: Base URL namespace -> model set mapping.
+    var baseURLNamespaceModelSets: [BaseURLNamespaceModelSet] = []
     
     /// IDE Scan state
     var showIDEScanSheet = false
@@ -165,6 +169,7 @@ final class QuotaViewModel {
     init() {
         self.proxyManager = CLIProxyManager.shared
         loadPersistedIDEQuotas()
+        loadBaseURLNamespaceModelSets()
         setupRefreshCadenceCallback()
         setupWarmupCallback()
         restartWarmupScheduler()
@@ -1371,7 +1376,17 @@ final class QuotaViewModel {
         oauthState = OAuthState(provider: provider, status: .waiting)
         
         do {
-            let response = try await client.getOAuthURL(for: provider, projectId: projectId)
+            // OAuth browser callbacks for Codex/Gemini/Antigravity/Claude rely on
+            // callback forwarders in CLIProxyAPI (`is_webui=true`).
+            // Using non-web UI flow in Quotio local mode can leave callback ports
+            // without listeners (e.g. localhost:51121/oauth-callback), causing
+            // ERR_CONNECTION_REFUSED in browser after consent.
+            let useWebUIFlow = true
+            let response = try await client.getOAuthURL(
+                for: provider,
+                projectId: projectId,
+                isWebUI: useWebUIFlow
+            )
             
             guard response.status == "ok", let urlString = response.url, let state = response.state else {
                 oauthState = OAuthState(provider: provider, status: .error, error: response.error)
@@ -1802,6 +1817,150 @@ final class QuotaViewModel {
         autoSelectMenuBarItems()
 
         notifyQuotaDataChanged()
+    }
+
+    // MARK: - Hybrid Namespace Model Set Persistence
+
+    /// Upsert a Base URL namespace -> model set mapping for Hybrid control plane.
+    func upsertBaseURLNamespaceModelSet(namespace: String, baseURL: String, modelSet: [String], notes: String? = nil) {
+        let item = BaseURLNamespaceModelSet(
+            namespace: namespace,
+            baseURL: baseURL,
+            modelSet: modelSet,
+            notes: notes
+        )
+        
+        guard !item.namespace.isEmpty else { return }
+        
+        if let existingIndex = baseURLNamespaceModelSets.firstIndex(where: { $0.namespace == item.namespace }) {
+            baseURLNamespaceModelSets[existingIndex] = item
+        } else {
+            baseURLNamespaceModelSets.append(item)
+            baseURLNamespaceModelSets.sort { $0.namespace.localizedCaseInsensitiveCompare($1.namespace) == .orderedAscending }
+        }
+        
+        saveBaseURLNamespaceModelSets()
+    }
+
+    /// Remove a namespace mapping from Hybrid control plane persistence.
+    func removeBaseURLNamespaceModelSet(namespace: String) {
+        let normalizedNamespace = namespace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedNamespace.isEmpty else { return }
+
+        let originalCount = baseURLNamespaceModelSets.count
+        baseURLNamespaceModelSets.removeAll { $0.namespace == normalizedNamespace }
+        guard baseURLNamespaceModelSets.count != originalCount else { return }
+
+        saveBaseURLNamespaceModelSets()
+    }
+    
+    /// Reset Hybrid namespace mapping to deterministic defaults for local + remote proxy modes.
+    func resetBaseURLNamespaceModelSetsToDefaults() {
+        baseURLNamespaceModelSets = defaultBaseURLNamespaceModelSets()
+        saveBaseURLNamespaceModelSets()
+    }
+    
+    /// Seed Hybrid namespace mapping with current runtime/shadow endpoints.
+    func seedBaseURLNamespaceModelSetsForCurrentTopology() {
+        let runtimeBaseURL = "http://localhost:" + String(proxyManager.port) + "/v1"
+        let shadowBaseURL = modeManager.remoteConfig?.endpointURL ?? "https://remote-host.example/v1"
+        
+        upsertBaseURLNamespaceModelSet(
+            namespace: "equilibrium.runtime",
+            baseURL: runtimeBaseURL,
+            modelSet: ["gpt-5.3-codex", "claude-opus-4.5", "gemini-2.5-pro"],
+            notes: "Hybrid control plane: seeded from current runtime endpoint"
+        )
+        
+        upsertBaseURLNamespaceModelSet(
+            namespace: "equilibrium.shadow",
+            baseURL: shadowBaseURL,
+            modelSet: ["gpt-5.3-codex", "claude-sonnet-4.5"],
+            notes: "Hybrid control plane: seeded from current shadow endpoint"
+        )
+    }
+
+    /// Sync current local Hybrid namespace mappings to Management API model-visibility config.
+    ///
+    /// Local cache remains source-of-truth fallback. Callers should keep local data on sync failure.
+    func syncBaseURLNamespaceModelSetsToManagementAPI() async throws {
+        guard let client = apiClient else {
+            throw APIError.connectionError("Management API unavailable")
+        }
+
+        let payload = buildModelVisibilityPayloadFromLocalMappings()
+        try await client.putModelVisibility(payload)
+    }
+
+    private func buildModelVisibilityPayloadFromLocalMappings() -> ModelVisibilityConfigPayload {
+        var namespaces: [String: [String]] = [:]
+        var hostNamespaces: [String: String] = [:]
+
+        for mapping in baseURLNamespaceModelSets {
+            let namespace = mapping.namespace.trimmingCharacters(in: .whitespacesAndNewlines)
+            let baseURL = mapping.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !namespace.isEmpty, !baseURL.isEmpty else { continue }
+
+            namespaces[namespace] = mapping.modelSet
+            hostNamespaces[baseURL] = namespace
+        }
+
+        return ModelVisibilityConfigPayload(
+            enabled: !namespaces.isEmpty,
+            namespaces: namespaces,
+            hostNamespaces: hostNamespaces
+        )
+    }
+    
+    private func loadBaseURLNamespaceModelSets() {
+        guard let data = UserDefaults.standard.data(forKey: Self.baseURLNamespaceModelSetsKey) else {
+            resetBaseURLNamespaceModelSetsToDefaults()
+            return
+        }
+        
+        do {
+            let decoded = try JSONDecoder().decode([BaseURLNamespaceModelSet].self, from: data)
+            if decoded.isEmpty {
+                resetBaseURLNamespaceModelSetsToDefaults()
+            } else {
+                baseURLNamespaceModelSets = decoded.sorted {
+                    $0.namespace.localizedCaseInsensitiveCompare($1.namespace) == .orderedAscending
+                }
+            }
+        } catch {
+            Log.error("Failed to load Base URL namespace model sets: \(error)")
+            UserDefaults.standard.removeObject(forKey: Self.baseURLNamespaceModelSetsKey)
+            resetBaseURLNamespaceModelSetsToDefaults()
+        }
+    }
+    
+    private func saveBaseURLNamespaceModelSets() {
+        do {
+            let encoded = try JSONEncoder().encode(baseURLNamespaceModelSets)
+            UserDefaults.standard.set(encoded, forKey: Self.baseURLNamespaceModelSetsKey)
+        } catch {
+            Log.error("Failed to save Base URL namespace model sets: \(error)")
+        }
+    }
+    
+    private func defaultBaseURLNamespaceModelSets() -> [BaseURLNamespaceModelSet] {
+        let localBaseURL = "http://localhost:" + String(proxyManager.port) + "/v1"
+        let remoteBaseURL = modeManager.remoteConfig?.endpointURL ?? "https://remote-host.example/v1"
+        
+        return [
+            BaseURLNamespaceModelSet(
+                namespace: "equilibrium.runtime",
+                baseURL: localBaseURL,
+                modelSet: ["gpt-5.3-codex", "claude-opus-4.5", "gemini-2.5-pro"],
+                notes: "Hybrid control plane: default runtime namespace"
+            ),
+            BaseURLNamespaceModelSet(
+                namespace: "equilibrium.shadow",
+                baseURL: remoteBaseURL,
+                modelSet: ["gpt-5.3-codex", "claude-sonnet-4.5"],
+                notes: "Hybrid control plane: default shadow namespace"
+            )
+        ]
     }
 
     // MARK: - IDE Quota Persistence

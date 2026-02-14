@@ -369,6 +369,25 @@ struct UnifiedProxySettingsSection: View {
     @State private var debugMode = false
     
     @State private var proxyURLValidation: ProxyURLValidationResult = .empty
+    @State private var showHybridMappingEditor = false
+    @State private var editingHybridMappingNamespace: String?
+    @State private var hybridMappingNamespace = ""
+    @State private var hybridMappingBaseURL = ""
+    @State private var hybridMappingModelSetText = ""
+    @State private var hybridMappingNotes = ""
+    @State private var pendingDeleteHybridMapping: BaseURLNamespaceModelSet?
+    @State private var hybridMappingSyncError: String?
+    @State private var isHybridMappingSyncing = false
+    @State private var hybridMappingLastSyncedAt: Date?
+    @State private var hybridMappingActiveAction: HybridMappingAction?
+
+    private enum HybridMappingAction: Equatable {
+        case save
+        case reseed
+        case resetDefaults
+        case delete(namespace: String)
+        case retrySync
+    }
     
     /// Check if API is available (proxy running for local, or connected for remote)
     private var isAPIAvailable: Bool {
@@ -390,61 +409,195 @@ struct UnifiedProxySettingsSection: View {
             ? "settings.proxySettings".localized()
             : "settings.remoteProxySettings".localized()
     }
+
+    private var parsedHybridMappingModelSet: [String] {
+        parseModelSetInput(hybridMappingModelSetText)
+    }
+
+    private var hybridMappingDraftValidationMessages: [String] {
+        let trimmedNamespace = hybridMappingNamespace.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBaseURL = hybridMappingBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasValidBaseURL: Bool = {
+            guard let url = URL(string: trimmedBaseURL) else { return false }
+            return url.scheme != nil && url.host != nil
+        }()
+
+        var messages: [String] = []
+        if trimmedNamespace.isEmpty {
+            messages.append("settings.hybridNamespace.validation.namespace".localized())
+        }
+        if !hasValidBaseURL {
+            messages.append("settings.hybridNamespace.validation.baseURL".localized())
+        }
+        if parsedHybridMappingModelSet.isEmpty {
+            messages.append("settings.hybridNamespace.validation.modelSet".localized())
+        }
+        return messages
+    }
+
+    private var isHybridMappingDraftValid: Bool {
+        hybridMappingDraftValidationMessages.isEmpty
+    }
+
+    private var isHybridMappingMutating: Bool {
+        hybridMappingActiveAction != nil
+    }
+
+    private var isHybridMappingSaveInProgress: Bool {
+        hybridMappingActiveAction == .save
+    }
+
+    private var isHybridMappingReseedInProgress: Bool {
+        hybridMappingActiveAction == .reseed
+    }
+
+    private var isHybridMappingResetInProgress: Bool {
+        hybridMappingActiveAction == .resetDefaults
+    }
+
+    private func isHybridMappingDeleteInProgress(namespace: String) -> Bool {
+        if case let .delete(activeNamespace) = hybridMappingActiveAction {
+            return activeNamespace == namespace
+        }
+        return false
+    }
+
+    private var hybridMappingSheetTitle: String {
+        editingHybridMappingNamespace == nil
+            ? "settings.hybridNamespace.editor.addTitle".localized()
+            : "settings.hybridNamespace.editor.editTitle".localized()
+    }
+
+    private var hybridMappingSyncStatusText: String {
+        if isHybridMappingSyncing {
+            return "settings.hybridNamespace.syncing".localized()
+        }
+        if let error = hybridMappingSyncError, !error.isEmpty {
+            return String(
+                format: "settings.hybridNamespace.syncError".localized(),
+                error
+            )
+        }
+        if let last = hybridMappingLastSyncedAt {
+            return String(
+                format: "settings.hybridNamespace.syncedAt".localized(),
+                last.formatted(date: .abbreviated, time: .shortened)
+            )
+        }
+        return "settings.hybridNamespace.syncPending".localized()
+    }
     
     var body: some View {
-        if !isAPIAvailable {
-            // Show placeholder when API is not available
-            Section {
-                HStack {
-                    Image(systemName: "network.slash")
-                        .foregroundStyle(.secondary)
-                    Text(modeManager.isLocalProxyMode 
-                         ? "settings.proxy.startToConfigureAdvanced".localized()
-                         : "settings.remote.noConnection".localized())
-                        .foregroundStyle(.secondary)
+        Group {
+            if !isAPIAvailable {
+                // Show placeholder when API is not available
+                Section {
+                    HStack {
+                        Image(systemName: "network.slash")
+                            .foregroundStyle(.secondary)
+                        Text(modeManager.isLocalProxyMode
+                             ? "settings.proxy.startToConfigureAdvanced".localized()
+                             : "settings.remote.noConnection".localized())
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Label(sectionTitle, systemImage: "slider.horizontal.3")
                 }
-            } header: {
-                Label(sectionTitle, systemImage: "slider.horizontal.3")
-            }
-        } else if isLoading {
-            Section {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text("settings.remote.loading".localized())
-                        .foregroundStyle(.secondary)
+            } else if isLoading {
+                Section {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("settings.remote.loading".localized())
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Label(sectionTitle, systemImage: "slider.horizontal.3")
                 }
-            } header: {
-                Label(sectionTitle, systemImage: "slider.horizontal.3")
-            }
-            .onAppear {
-                Task {
-                    await loadConfig()
-                }
-            }
-        } else if let error = loadError {
-            Section {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("action.retry".localized()) {
-                        Task {
-                            await loadConfig()
-                        }
+                .onAppear {
+                    Task {
+                        await loadConfig()
                     }
                 }
-            } header: {
-                Label(sectionTitle, systemImage: "slider.horizontal.3")
+            } else if let error = loadError {
+                Section {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(error)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("action.retry".localized()) {
+                            Task {
+                                await loadConfig()
+                            }
+                        }
+                    }
+                } header: {
+                    Label(sectionTitle, systemImage: "slider.horizontal.3")
+                }
+            } else {
+                upstreamProxySection
+                routingStrategySection
+                hybridNamespaceModelSetSection
+                quotaExceededSection
+                retryConfigurationSection
+                loggingSection
             }
-        } else {
-            upstreamProxySection
-            routingStrategySection
-            quotaExceededSection
-            retryConfigurationSection
-            loggingSection
+        }
+        .sheet(isPresented: $showHybridMappingEditor) {
+            HybridNamespaceModelSetEditorSheet(
+                title: hybridMappingSheetTitle,
+                namespace: $hybridMappingNamespace,
+                baseURL: $hybridMappingBaseURL,
+                modelSetText: $hybridMappingModelSetText,
+                notes: $hybridMappingNotes,
+                validationMessages: hybridMappingDraftValidationMessages,
+                isSaving: isHybridMappingSaveInProgress,
+                syncErrorMessage: isHybridMappingSaveInProgress ? hybridMappingSyncError : nil,
+                isSaveDisabled: !isHybridMappingDraftValid,
+                onSave: {
+                    Task {
+                        await persistHybridMappingEditorDraft()
+                    }
+                },
+                onCancel: {
+                    guard !isHybridMappingSaveInProgress else { return }
+                    showHybridMappingEditor = false
+                    resetHybridMappingEditorDraft()
+                }
+            )
+        }
+        .alert(
+            "settings.hybridNamespace.delete.title".localized(),
+            isPresented: Binding(
+                get: { pendingDeleteHybridMapping != nil },
+                set: { newValue in
+                    if !newValue {
+                        pendingDeleteHybridMapping = nil
+                    }
+                }
+            )
+        ) {
+            Button("action.cancel".localized(), role: .cancel) {
+                pendingDeleteHybridMapping = nil
+            }
+            Button("action.delete".localized(), role: .destructive) {
+                guard let mapping = pendingDeleteHybridMapping else { return }
+                pendingDeleteHybridMapping = nil
+                Task {
+                    await performHybridMappingMutation(.delete(namespace: mapping.namespace)) {
+                        viewModel.removeBaseURLNamespaceModelSet(namespace: mapping.namespace)
+                    }
+                }
+            }
+        } message: {
+            Text(
+                String(
+                    format: "settings.hybridNamespace.delete.message".localized(),
+                    pendingDeleteHybridMapping?.namespace ?? ""
+                )
+            )
         }
     }
     
@@ -520,6 +673,124 @@ struct UnifiedProxySettingsSection: View {
         } footer: {
             Text("settings.quotaExceededHelp".localized())
                 .font(.caption)
+        }
+    }
+    
+    private var hybridNamespaceModelSetSection: some View {
+        Section {
+            if viewModel.baseURLNamespaceModelSets.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tray")
+                            .foregroundStyle(.secondary)
+                        Text("settings.hybridNamespace.empty".localized())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("settings.hybridNamespace.help".localized())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(viewModel.baseURLNamespaceModelSets) { mapping in
+                    HybridNamespaceModelSetCard(
+                        mapping: mapping,
+                        isActionsDisabled: isHybridMappingMutating,
+                        isDeleteInProgress: isHybridMappingDeleteInProgress(namespace: mapping.namespace),
+                        onEdit: { presentEditHybridMappingEditor(mapping) },
+                        onDelete: { pendingDeleteHybridMapping = mapping }
+                    )
+                }
+            }
+
+            if let syncError = hybridMappingSyncError, !syncError.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(
+                            String(
+                                format: "settings.hybridNamespace.syncError".localized(),
+                                syncError
+                            )
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Button("action.retry".localized()) {
+                            Task {
+                                await retryHybridMappingsSync()
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isHybridMappingMutating)
+                    }
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    presentCreateHybridMappingEditor()
+                } label: {
+                    Label("settings.hybridNamespace.add".localized(), systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .disabled(isHybridMappingMutating)
+
+                Button {
+                    Task {
+                        await performHybridMappingMutation(.reseed) {
+                            viewModel.seedBaseURLNamespaceModelSetsForCurrentTopology()
+                        }
+                    }
+                } label: {
+                    if isHybridMappingReseedInProgress {
+                        HStack(spacing: 6) {
+                            SmallProgressView()
+                            Text("settings.hybridNamespace.syncing".localized())
+                        }
+                    } else {
+                        Label("settings.hybridNamespace.reseed".localized(), systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isHybridMappingMutating)
+
+                Button {
+                    Task {
+                        await performHybridMappingMutation(.resetDefaults) {
+                            viewModel.resetBaseURLNamespaceModelSetsToDefaults()
+                        }
+                    }
+                } label: {
+                    if isHybridMappingResetInProgress {
+                        HStack(spacing: 6) {
+                            SmallProgressView()
+                            Text("settings.hybridNamespace.syncing".localized())
+                        }
+                    } else {
+                        Label("settings.hybridNamespace.resetDefaults".localized(), systemImage: "arrow.counterclockwise")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isHybridMappingMutating)
+
+                if isHybridMappingSyncing && !isHybridMappingReseedInProgress && !isHybridMappingResetInProgress {
+                    HStack(spacing: 6) {
+                        SmallProgressView()
+                        Text("settings.hybridNamespace.syncing".localized())
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Label("settings.hybridNamespace.title".localized(), systemImage: "square.stack.3d.up.fill")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("settings.hybridNamespace.persistedHelp".localized())
+                Text(hybridMappingSyncStatusText)
+                    .foregroundStyle(hybridMappingSyncError == nil ? Color.secondary : Color.orange)
+            }
+            .font(.caption)
         }
     }
     
@@ -706,6 +977,336 @@ struct UnifiedProxySettingsSection: View {
         } catch {
             NSLog("[RemoteSettings] Failed to save debug mode: \(error)")
         }
+    }
+
+    private func presentCreateHybridMappingEditor() {
+        guard !isHybridMappingMutating else { return }
+        hybridMappingSyncError = nil
+        editingHybridMappingNamespace = nil
+        hybridMappingNamespace = ""
+        hybridMappingBaseURL = ""
+        hybridMappingModelSetText = ""
+        hybridMappingNotes = ""
+        showHybridMappingEditor = true
+    }
+
+    private func presentEditHybridMappingEditor(_ mapping: BaseURLNamespaceModelSet) {
+        guard !isHybridMappingMutating else { return }
+        hybridMappingSyncError = nil
+        editingHybridMappingNamespace = mapping.namespace
+        hybridMappingNamespace = mapping.namespace
+        hybridMappingBaseURL = mapping.baseURL
+        hybridMappingModelSetText = mapping.modelSet.joined(separator: "\n")
+        hybridMappingNotes = mapping.notes ?? ""
+        showHybridMappingEditor = true
+    }
+
+    private func persistHybridMappingEditorDraft() async {
+        guard !isHybridMappingSaveInProgress else { return }
+        guard hybridMappingDraftValidationMessages.isEmpty else { return }
+
+        let namespace = hybridMappingNamespace.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = hybridMappingBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = hybridMappingNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelSet = parsedHybridMappingModelSet
+        guard !namespace.isEmpty, !baseURL.isEmpty, !modelSet.isEmpty else { return }
+
+        await performHybridMappingMutation(.save) {
+            if let originalNamespace = editingHybridMappingNamespace, originalNamespace != namespace {
+                viewModel.removeBaseURLNamespaceModelSet(namespace: originalNamespace)
+            }
+
+            viewModel.upsertBaseURLNamespaceModelSet(
+                namespace: namespace,
+                baseURL: baseURL,
+                modelSet: modelSet,
+                notes: notes.isEmpty ? nil : notes
+            )
+        }
+
+        if hybridMappingSyncError == nil {
+            showHybridMappingEditor = false
+            resetHybridMappingEditorDraft()
+        }
+    }
+
+    private func performHybridMappingMutation(_ action: HybridMappingAction, localMutation: () -> Void) async {
+        guard !isHybridMappingMutating else { return }
+        hybridMappingActiveAction = action
+        hybridMappingSyncError = nil
+        localMutation()
+        await syncHybridMappingsToManagementAPI()
+        hybridMappingActiveAction = nil
+    }
+
+    private func retryHybridMappingsSync() async {
+        await performHybridMappingMutation(.retrySync) {}
+    }
+
+    private func syncHybridMappingsToManagementAPI() async {
+        if isHybridMappingSyncing {
+            return
+        }
+        isHybridMappingSyncing = true
+        defer { isHybridMappingSyncing = false }
+        do {
+            try await viewModel.syncBaseURLNamespaceModelSetsToManagementAPI()
+            hybridMappingSyncError = nil
+            hybridMappingLastSyncedAt = Date()
+        } catch {
+            hybridMappingSyncError = error.localizedDescription
+            NSLog("[RemoteSettings] Failed to sync model-visibility; local cache fallback kept: \(error)")
+        }
+    }
+
+    private func resetHybridMappingEditorDraft() {
+        editingHybridMappingNamespace = nil
+        hybridMappingNamespace = ""
+        hybridMappingBaseURL = ""
+        hybridMappingModelSetText = ""
+        hybridMappingNotes = ""
+    }
+
+    private func parseModelSetInput(_ input: String) -> [String] {
+        Array(
+            Set(
+                input
+                    .split(whereSeparator: { $0 == "," || $0.isNewline })
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+    }
+}
+
+private struct HybridNamespaceModelSetCard: View {
+    let mapping: BaseURLNamespaceModelSet
+    let isActionsDisabled: Bool
+    let isDeleteInProgress: Bool
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    private var hostDisplay: String {
+        guard let components = URLComponents(string: mapping.baseURL),
+              let host = components.host else {
+            return "settings.hybridNamespace.invalidHost".localized()
+        }
+        if let port = components.port {
+            return host + ":" + String(port)
+        }
+        return host
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mapping.namespace)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Text(
+                        String(
+                            format: "settings.hybridNamespace.host".localized(),
+                            hostDisplay
+                        )
+                    )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    Button("action.edit".localized(), action: onEdit)
+                        .buttonStyle(.borderless)
+                        .disabled(isActionsDisabled)
+                    Button(role: .destructive, action: onDelete) {
+                        if isDeleteInProgress {
+                            SmallProgressView()
+                        } else {
+                            Text("action.delete".localized())
+                        }
+                    }
+                        .buttonStyle(.borderless)
+                        .disabled(isActionsDisabled)
+                }
+            }
+            
+            Text(mapping.baseURL)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            
+            if !mapping.modelSet.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(
+                        String(
+                            format: "settings.hybridNamespace.modelsCount".localized(),
+                            mapping.modelSet.count
+                        )
+                    )
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    ForEach(mapping.modelSet, id: \.self) { model in
+                        Text("• \(model)")
+                            .font(.caption)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            
+            if let notes = mapping.notes, !notes.isEmpty {
+                Text(notes)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
+    }
+}
+
+private struct HybridNamespaceModelSetEditorSheet: View {
+    let title: String
+    @Binding var namespace: String
+    @Binding var baseURL: String
+    @Binding var modelSetText: String
+    @Binding var notes: String
+    let validationMessages: [String]
+    let isSaving: Bool
+    let syncErrorMessage: String?
+    let isSaveDisabled: Bool
+    let onSave: () -> Void
+    let onCancel: () -> Void
+
+    private var normalizedNamespace: String {
+        namespace.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedBaseURL: String {
+        baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var parsedModelSetCount: Int {
+        modelSetText
+            .split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .count
+    }
+
+    private var namespaceValidationMessage: String? {
+        normalizedNamespace.isEmpty
+            ? "settings.hybridNamespace.validation.namespace".localized()
+            : nil
+    }
+
+    private var baseURLValidationMessage: String? {
+        guard let url = URL(string: normalizedBaseURL), url.scheme != nil, url.host != nil else {
+            return "settings.hybridNamespace.validation.baseURL".localized()
+        }
+        return nil
+    }
+
+    private var modelSetValidationMessage: String? {
+        parsedModelSetCount == 0
+            ? "settings.hybridNamespace.validation.modelSet".localized()
+            : nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("settings.hybridNamespace.editor.mappingSection".localized()) {
+                    TextField("settings.hybridNamespace.editor.namespacePlaceholder".localized(), text: $namespace)
+                    if let namespaceValidationMessage {
+                        Label(namespaceValidationMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    TextField("settings.hybridNamespace.editor.baseURLPlaceholder".localized(), text: $baseURL)
+                        .textFieldStyle(.roundedBorder)
+                    if let baseURLValidationMessage {
+                        Label(baseURLValidationMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                Section("settings.hybridNamespace.editor.modelSetSection".localized()) {
+                    TextEditor(text: $modelSetText)
+                        .frame(minHeight: 120)
+                    Text("settings.hybridNamespace.editor.modelSetHelp".localized())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(
+                        String(
+                            format: "settings.hybridNamespace.modelCount".localized(),
+                            parsedModelSetCount
+                        )
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    if let modelSetValidationMessage {
+                        Label(modelSetValidationMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                Section("settings.hybridNamespace.editor.notesSection".localized()) {
+                    TextField("settings.hybridNamespace.editor.notesPlaceholder".localized(), text: $notes, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+
+                if !validationMessages.isEmpty {
+                    Section {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(validationMessages, id: \.self) { message in
+                                Label(message, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+
+                if let syncErrorMessage, !syncErrorMessage.isEmpty {
+                    Section {
+                        Label(
+                            String(
+                                format: "settings.hybridNamespace.syncError".localized(),
+                                syncErrorMessage
+                            ),
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .navigationTitle(title)
+            .disabled(isSaving)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("action.cancel".localized(), action: onCancel)
+                        .disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(action: onSave) {
+                        if isSaving {
+                            SmallProgressView()
+                        } else {
+                            Text("action.save".localized())
+                        }
+                    }
+                    .disabled(isSaveDisabled || isSaving)
+                }
+            }
+        }
+        .interactiveDismissDisabled(isSaving)
+        .frame(minWidth: 560, minHeight: 420)
     }
 }
 
@@ -1150,7 +1751,7 @@ struct ProxyUpdateSettingsSection: View {
                 // Last checked time
                 if let lastCheck = atomFeedService.lastCLIProxyCheck {
                     HStack {
-                        Text("Last checked")
+                        Text("settings.lastChecked".localized())
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -2307,7 +2908,7 @@ struct AboutProxyUpdateSection: View {
                 // Last checked time
                 if let lastCheck = atomFeedService.lastCLIProxyCheck {
                     HStack {
-                        Text("Last checked")
+                        Text("settings.lastChecked".localized())
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -2643,7 +3244,7 @@ struct AboutProxyUpdateCard: View {
                 // Last checked time
                 if let lastCheck = atomFeedService.lastCLIProxyCheck {
                     HStack {
-                        Text("Last checked")
+                        Text("settings.lastChecked".localized())
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()

@@ -245,7 +245,11 @@ actor ManagementAPIClient {
         return try JSONDecoder().decode(UsageStats.self, from: data)
     }
     
-    func getOAuthURL(for provider: AIProvider, projectId: String? = nil) async throws -> OAuthURLResponse {
+    func getOAuthURL(
+        for provider: AIProvider,
+        projectId: String? = nil,
+        isWebUI: Bool = true
+    ) async throws -> OAuthURLResponse {
         var endpoint = provider.oauthEndpoint
         var queryParams: [String] = []
         
@@ -254,7 +258,7 @@ actor ManagementAPIClient {
         }
         
         let webUIProviders: [AIProvider] = [.antigravity, .claude, .codex, .gemini, .iflow, .kiro]
-        if webUIProviders.contains(provider) {
+        if isWebUI && webUIProviders.contains(provider) {
             queryParams.append("is_webui=true")
         }
         
@@ -425,6 +429,39 @@ actor ManagementAPIClient {
         let response = try JSONDecoder().decode(SwitchPreviewModelResponse.self, from: data)
         return response.switchPreviewModel
     }
+
+    /// Get model visibility config (BaseURL/namespace/model-set control plane).
+    func getModelVisibility() async throws -> ModelVisibilityConfigPayload {
+        let data = try await makeRequest("/model-visibility")
+        let response = try JSONDecoder().decode(ModelVisibilityEnvelope.self, from: data)
+        return response.modelVisibility
+    }
+
+    /// Replace model visibility config.
+    func putModelVisibility(_ config: ModelVisibilityConfigPayload) async throws {
+        let body = try JSONEncoder().encode(ModelVisibilityEnvelope(modelVisibility: config))
+        _ = try await makeRequest("/model-visibility", method: "PUT", body: body)
+    }
+
+    /// Patch model visibility config.
+    func patchModelVisibility(
+        enabled: Bool? = nil,
+        namespaces: [String: [String]]? = nil,
+        hostNamespaces: [String: String]? = nil
+    ) async throws {
+        guard enabled != nil || namespaces != nil || hostNamespaces != nil else {
+            return
+        }
+
+        let body = try JSONEncoder().encode(
+            ModelVisibilityPatchRequest(
+                enabled: enabled,
+                namespaces: namespaces,
+                hostNamespaces: hostNamespaces
+            )
+        )
+        _ = try await makeRequest("/model-visibility", method: "PATCH", body: body)
+    }
     
     func uploadVertexServiceAccount(jsonPath: String) async throws {
         let url = URL(fileURLWithPath: jsonPath)
@@ -440,6 +477,12 @@ actor ManagementAPIClient {
         let data = try await makeRequest("/api-keys")
         let response = try JSONDecoder().decode(APIKeysResponse.self, from: data)
         return response.apiKeys
+    }
+
+    /// Fetch account-level egress mapping snapshot from management API.
+    func fetchEgressMapping() async throws -> EgressMappingResponse {
+        let data = try await makeRequest("/v0/management/egress-mapping")
+        return try JSONDecoder().decode(EgressMappingResponse.self, from: data)
     }
     
     func addAPIKey(_ key: String) async throws {
@@ -591,6 +634,86 @@ nonisolated struct APICallResponse: Codable, Sendable {
     }
 }
 
+nonisolated struct EgressMappingResponse: Codable, Sendable {
+    let available: Bool?
+    let enabled: Bool?
+    let driftAlertThreshold: Int?
+    let totalAccounts: Int?
+    let driftedAccounts: Int?
+    let alertedAccounts: Int?
+    let totalDriftEvents: Int?
+    let inconsistentAccounts: Int?
+    let totalConsistencyIssues: Int?
+    let accounts: [EgressMappingAccount]
+    let generatedAtUTC: String?
+    let sensitiveRedaction: String?
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case enabled
+        case driftAlertThreshold = "drift_alert_threshold"
+        case totalAccounts = "total_accounts"
+        case driftedAccounts = "drifted_accounts"
+        case alertedAccounts = "alerted_accounts"
+        case totalDriftEvents = "total_drift_events"
+        case inconsistentAccounts = "inconsistent_accounts"
+        case totalConsistencyIssues = "total_consistency_issues"
+        case accounts
+        case generatedAtUTC = "generated_at_utc"
+        case sensitiveRedaction = "sensitive_redaction"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        available = try container.decodeIfPresent(Bool.self, forKey: .available)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled)
+        driftAlertThreshold = try container.decodeIfPresent(Int.self, forKey: .driftAlertThreshold)
+        totalAccounts = try container.decodeIfPresent(Int.self, forKey: .totalAccounts)
+        driftedAccounts = try container.decodeIfPresent(Int.self, forKey: .driftedAccounts)
+        alertedAccounts = try container.decodeIfPresent(Int.self, forKey: .alertedAccounts)
+        totalDriftEvents = try container.decodeIfPresent(Int.self, forKey: .totalDriftEvents)
+        inconsistentAccounts = try container.decodeIfPresent(Int.self, forKey: .inconsistentAccounts)
+        totalConsistencyIssues = try container.decodeIfPresent(Int.self, forKey: .totalConsistencyIssues)
+        accounts = try container.decodeIfPresent([EgressMappingAccount].self, forKey: .accounts) ?? []
+        generatedAtUTC = try container.decodeIfPresent(String.self, forKey: .generatedAtUTC)
+        sensitiveRedaction = try container.decodeIfPresent(String.self, forKey: .sensitiveRedaction)
+    }
+}
+
+nonisolated struct EgressMappingAccount: Codable, Sendable {
+    let authID: String?
+    let authIndex: String?
+    let provider: String?
+    let proxyIdentity: String?
+    let driftCount: Int?
+    let driftAlerted: Bool?
+    let consistencyStatus: String?
+    let consistencyIssues: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case authID = "auth_id"
+        case authIndex = "auth_index"
+        case provider
+        case proxyIdentity = "proxy_identity"
+        case driftCount = "drift_count"
+        case driftAlerted = "drift_alerted"
+        case consistencyStatus = "consistency_status"
+        case consistencyIssues = "consistency_issues"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        authID = try container.decodeIfPresent(String.self, forKey: .authID)
+        authIndex = try container.decodeIfPresent(String.self, forKey: .authIndex)
+        provider = try container.decodeIfPresent(String.self, forKey: .provider)
+        proxyIdentity = try container.decodeIfPresent(String.self, forKey: .proxyIdentity)
+        driftCount = try container.decodeIfPresent(Int.self, forKey: .driftCount)
+        driftAlerted = try container.decodeIfPresent(Bool.self, forKey: .driftAlerted)
+        consistencyStatus = try container.decodeIfPresent(String.self, forKey: .consistencyStatus)
+        consistencyIssues = try container.decodeIfPresent([String].self, forKey: .consistencyIssues) ?? []
+    }
+}
+
 nonisolated enum APIError: LocalizedError {
     case invalidURL
     case invalidResponse
@@ -640,6 +763,55 @@ nonisolated struct RemoteProxyQuotaExceededConfig: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case switchProject = "switch-project"
         case switchPreviewModel = "switch-preview-model"
+    }
+}
+
+nonisolated struct ModelVisibilityConfigPayload: Codable, Sendable {
+    var enabled: Bool
+    var namespaces: [String: [String]]
+    var hostNamespaces: [String: String]
+
+    init(
+        enabled: Bool = false,
+        namespaces: [String: [String]] = [:],
+        hostNamespaces: [String: String] = [:]
+    ) {
+        self.enabled = enabled
+        self.namespaces = namespaces
+        self.hostNamespaces = hostNamespaces
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        namespaces = try container.decodeIfPresent([String: [String]].self, forKey: .namespaces) ?? [:]
+        hostNamespaces = try container.decodeIfPresent([String: String].self, forKey: .hostNamespaces) ?? [:]
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case namespaces
+        case hostNamespaces = "host-namespaces"
+    }
+}
+
+nonisolated struct ModelVisibilityEnvelope: Codable, Sendable {
+    let modelVisibility: ModelVisibilityConfigPayload
+
+    enum CodingKeys: String, CodingKey {
+        case modelVisibility = "model-visibility"
+    }
+}
+
+nonisolated struct ModelVisibilityPatchRequest: Encodable, Sendable {
+    let enabled: Bool?
+    let namespaces: [String: [String]]?
+    let hostNamespaces: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case namespaces
+        case hostNamespaces = "host-namespaces"
     }
 }
 

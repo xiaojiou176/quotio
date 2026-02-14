@@ -469,6 +469,30 @@ nonisolated struct RemoteManagementConfig: Codable {
     }
 }
 
+// MARK: - Hybrid Base URL Namespace Mapping
+
+nonisolated struct BaseURLNamespaceModelSet: Codable, Identifiable, Hashable, Sendable {
+    let namespace: String
+    var baseURL: String
+    var modelSet: [String]
+    var notes: String?
+    
+    var id: String { namespace }
+    
+    init(namespace: String, baseURL: String, modelSet: [String], notes: String? = nil) {
+        self.namespace = namespace.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelSet = Array(
+            Set(
+                modelSet
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+        self.notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 // MARK: - Log Entry
 
 nonisolated struct LogEntry: Identifiable {

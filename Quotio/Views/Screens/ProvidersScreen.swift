@@ -26,9 +26,47 @@ struct ProvidersScreen: View {
     @State private var showAddProviderPopover = false
     @State private var switchingAccount: AccountRowData?
     @State private var modeManager = OperatingModeManager.shared
+    @State private var egressMapping: EgressMappingResponse?
+    @State private var egressMappingError: String?
+    @State private var isRefreshingEgressMapping = false
+    @State private var showOnlyEgressIssues = false
+    @State private var selectedEgressProviderFilter = "__all__"
+    @State private var egressSortMode: EgressSortMode = .issuesFirst
 
     private let customProviderService = CustomProviderService.shared
     private let warpService = WarpService.shared
+    private let egressAllProviderFilter = "__all__"
+    private let egressUnknownProviderFilter = "__unknown__"
+
+    private enum EgressSortMode: String, CaseIterable, Identifiable {
+        case issuesFirst
+        case driftHighToLow
+        case account
+
+        var id: String { rawValue }
+
+        var localizedTitle: String {
+            switch self {
+            case .issuesFirst:
+                return "providers.egress.alerted".localized()
+            case .driftHighToLow:
+                return "providers.egress.chip.drifted".localized()
+            case .account:
+                return "providers.egress.chip.accounts".localized()
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .issuesFirst:
+                return "exclamationmark.triangle.fill"
+            case .driftHighToLow:
+                return "arrow.up.arrow.down"
+            case .account:
+                return "person.text.rectangle"
+            }
+        }
+    }
     
     // MARK: - Computed Properties
     
@@ -130,8 +168,11 @@ struct ProvidersScreen: View {
         List {
             // Section 1: Your Accounts (grouped by provider)
             accountsSection
+
+            // Section 2: Egress Mapping (read-only observability)
+            egressMappingSection
             
-            // Section 2: Custom Providers (Local Proxy Mode only)
+            // Section 3: Custom Providers (Local Proxy Mode only)
             if modeManager.isLocalProxyMode {
                 customProvidersSection
             }
@@ -160,6 +201,7 @@ struct ProvidersScreen: View {
         }
         .task {
             await viewModel.loadDirectAuthFiles()
+            await refreshEgressMapping()
         }
         .alert("providers.proxyRequired.title".localized(), isPresented: $showProxyRequiredAlert) {
             Button("action.startProxy".localized()) {
@@ -243,12 +285,13 @@ struct ProvidersScreen: View {
         ToolbarItem(placement: .automatic) {
             Button {
                 Task {
-        if modeManager.isLocalProxyMode && viewModel.proxyManager.proxyStatus.running {
+                    if modeManager.isLocalProxyMode && viewModel.proxyManager.proxyStatus.running {
                         await viewModel.refreshData()
                     } else {
                         await viewModel.loadDirectAuthFiles()
                     }
                     await viewModel.refreshAutoDetectedProviders()
+                    await refreshEgressMapping()
                 }
             } label: {
                 if viewModel.isLoadingQuotas {
@@ -259,6 +302,126 @@ struct ProvidersScreen: View {
             }
             .disabled(viewModel.isLoadingQuotas)
             .help("action.refresh".localized())
+        }
+    }
+
+    // MARK: - Egress Mapping Section
+
+    @ViewBuilder
+    private var egressMappingSection: some View {
+        Section {
+            if let message = egressMappingError, !message.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("status.error".localized(), systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("action.retry".localized()) {
+                        Task { await refreshEgressMapping() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if let snapshot = egressMapping {
+                let visibleAccounts = filteredEgressAccounts(snapshot)
+                egressMappingSummaryView(snapshot, visibleCount: visibleAccounts.count)
+
+                if isRefreshingEgressMapping {
+                    HStack(spacing: 8) {
+                        SmallProgressView()
+                        Text("providers.egress.loading".localized())
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !snapshot.accounts.isEmpty {
+                    egressControlsView(snapshot: snapshot, visibleCount: visibleAccounts.count)
+                }
+
+                if visibleAccounts.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(
+                            showOnlyEgressIssues
+                                ? "providers.egress.onlyIssuesEmpty".localized()
+                                : "providers.egress.empty".localized(),
+                            systemImage: "line.3.horizontal.decrease.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        if hasActiveEgressFilter(snapshot) {
+                            Button("logs.all".localized()) {
+                                showOnlyEgressIssues = false
+                                selectedEgressProviderFilter = egressAllProviderFilter
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                        }
+                    }
+                } else {
+                    ForEach(Array(visibleAccounts.enumerated()), id: \.offset) { index, account in
+                        egressMappingAccountRow(account, index: index)
+                    }
+                }
+            } else if isRefreshingEgressMapping {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("providers.egress.loading".localized(), systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SmallProgressView()
+                }
+            } else if viewModel.apiClient == nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("providers.egress.unavailable".localized(), systemImage: "wifi.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("action.refresh".localized()) {
+                        Task { await refreshEgressMapping() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isRefreshingEgressMapping)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("providers.egress.notLoaded".localized(), systemImage: "tray")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("action.refresh".localized()) {
+                        Task { await refreshEgressMapping() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isRefreshingEgressMapping)
+                }
+            }
+        } header: {
+            HStack {
+                Label("providers.egress.title".localized(), systemImage: "network")
+                Spacer()
+                Button {
+                    Task { await refreshEgressMapping() }
+                } label: {
+                    if isRefreshingEgressMapping {
+                        SmallProgressView()
+                    } else {
+                        Label("action.refresh".localized(), systemImage: "arrow.clockwise")
+                            .labelStyle(.iconOnly)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isRefreshingEgressMapping)
+                .help("providers.egress.refresh".localized())
+            }
+        } footer: {
+            Text("providers.egress.footer".localized())
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
     
@@ -373,6 +536,313 @@ struct ProvidersScreen: View {
     }
     
     // MARK: - Helper Functions
+
+    @ViewBuilder
+    private func egressMappingSummaryView(_ snapshot: EgressMappingResponse, visibleCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Label(
+                    snapshot.enabled == true
+                        ? "providers.egress.status.enabled".localized()
+                        : "providers.egress.status.disabled".localized(),
+                    systemImage: snapshot.enabled == true ? "checkmark.circle.fill" : "xmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(snapshot.enabled == true ? .green : .secondary)
+
+                if let redaction = snapshot.sensitiveRedaction, !redaction.isEmpty {
+                    Text(String(format: "providers.egress.redaction".localized(), redaction))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if let generatedAt = formattedEgressTimestamp(snapshot.generatedAtUTC), !generatedAt.isEmpty {
+                    Text("dashboard.updated".localized() + " " + generatedAt)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            HStack(spacing: 10) {
+                egressSummaryChip(title: "providers.egress.chip.accounts".localized(), value: snapshot.totalAccounts)
+                egressSummaryChip(title: "providers.egress.chip.drifted".localized(), value: snapshot.driftedAccounts)
+                egressSummaryChip(title: "providers.egress.chip.alerted".localized(), value: snapshot.alertedAccounts)
+                egressSummaryChip(title: "providers.egress.chip.inconsistent".localized(), value: snapshot.inconsistentAccounts)
+                egressSummaryChip(title: "logs.all".localized(), value: visibleCount)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func egressControlsView(snapshot: EgressMappingResponse, visibleCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Toggle("providers.egress.onlyIssues".localized(), isOn: $showOnlyEgressIssues)
+                    .toggleStyle(.switch)
+                Spacer()
+                egressSummaryChip(title: "providers.egress.chip.accounts".localized(), value: visibleCount)
+            }
+
+            HStack(spacing: 8) {
+                Picker("providers.egress.chip.accounts".localized(), selection: $selectedEgressProviderFilter) {
+                    Text("logs.all".localized()).tag(egressAllProviderFilter)
+                    ForEach(egressProviderOptions(snapshot), id: \.self) { provider in
+                        Text(egressProviderDisplayName(provider)).tag(provider)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .help("providers.egress.chip.accounts".localized())
+
+                Picker("providers.egress.chip.drifted".localized(), selection: $egressSortMode) {
+                    ForEach(EgressSortMode.allCases) { mode in
+                        Label(mode.localizedTitle, systemImage: mode.systemImage).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .help("providers.egress.chip.drifted".localized())
+            }
+        }
+    }
+
+    private func egressSummaryChip(title: String, value: Int?) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value.map(String.init) ?? "—")
+                .font(.caption2.bold())
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private func egressMappingAccountRow(_ account: EgressMappingAccount, index: Int) -> some View {
+        let hasIssues = isEgressIssue(account)
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                let fallbackID = String(format: "providers.egress.account.fallback".localized(), index + 1)
+                Text(account.authID ?? account.authIndex ?? fallbackID)
+                    .font(.subheadline.weight(.medium))
+                if let provider = account.provider, !provider.isEmpty {
+                    Text(provider.uppercased())
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Spacer()
+                if let driftCount = account.driftCount {
+                    Text(String(format: "providers.egress.drift".localized(), driftCount))
+                        .font(.caption)
+                        .foregroundStyle(driftCount > 0 ? .orange : .secondary)
+                } else {
+                    Text("providers.egress.driftUnknown".localized())
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Text(account.proxyIdentity ?? "providers.egress.proxyUnknown".localized())
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            HStack(spacing: 8) {
+                Label(
+                    hasIssues ? "status.error".localized() : "status.connected".localized(),
+                    systemImage: hasIssues ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                )
+                .font(.caption2)
+                .foregroundStyle(hasIssues ? .orange : .green)
+
+                if account.driftAlerted == true {
+                    Label("providers.egress.alerted".localized(), systemImage: "bell.badge.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+
+                if let status = account.consistencyStatus, !status.isEmpty {
+                    Text(String(format: "providers.egress.status".localized(), localizedConsistencyStatus(status)))
+                        .font(.caption2)
+                        .foregroundStyle(status.lowercased() == "ok" ? Color.secondary : Color.orange)
+                }
+            }
+
+            if !account.consistencyIssues.isEmpty {
+                Text(account.consistencyIssues.joined(separator: ", "))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func filteredEgressAccounts(_ snapshot: EgressMappingResponse) -> [EgressMappingAccount] {
+        var accounts = snapshot.accounts
+        let hasMatchingProvider = snapshot.accounts.contains {
+            normalizedEgressProvider($0.provider) == selectedEgressProviderFilter
+        }
+
+        if selectedEgressProviderFilter != egressAllProviderFilter && hasMatchingProvider {
+            accounts = accounts.filter { normalizedEgressProvider($0.provider) == selectedEgressProviderFilter }
+        }
+
+        if showOnlyEgressIssues {
+            accounts = accounts.filter(isEgressIssue)
+        }
+
+        return accounts.sorted(by: compareEgressAccounts)
+    }
+
+    private func refreshEgressMapping() async {
+        guard let client = viewModel.apiClient else {
+            egressMapping = nil
+            egressMappingError = nil
+            return
+        }
+
+        isRefreshingEgressMapping = true
+        defer { isRefreshingEgressMapping = false }
+        let previousSnapshot = egressMapping
+        egressMappingError = nil
+
+        do {
+            let snapshot = try await client.fetchEgressMapping()
+            egressMapping = snapshot
+            egressMappingError = nil
+        } catch APIError.httpError(404) {
+            egressMapping = previousSnapshot
+            egressMappingError = "providers.egress.unavailable".localized()
+        } catch {
+            egressMapping = previousSnapshot
+            egressMappingError = error.localizedDescription
+        }
+    }
+
+    private func hasActiveEgressFilter(_ snapshot: EgressMappingResponse) -> Bool {
+        let hasProviderFilter =
+            selectedEgressProviderFilter != egressAllProviderFilter &&
+            snapshot.accounts.contains { normalizedEgressProvider($0.provider) == selectedEgressProviderFilter }
+        return showOnlyEgressIssues || hasProviderFilter
+    }
+
+    private func egressProviderOptions(_ snapshot: EgressMappingResponse) -> [String] {
+        let providers = Set(snapshot.accounts.map { normalizedEgressProvider($0.provider) })
+        return providers.sorted()
+    }
+
+    private func egressProviderDisplayName(_ provider: String) -> String {
+        if provider == egressUnknownProviderFilter {
+            return "providers.egress.proxyUnknown".localized()
+        }
+        return provider.uppercased()
+    }
+
+    private func normalizedEgressProvider(_ provider: String?) -> String {
+        guard let provider, !provider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return egressUnknownProviderFilter
+        }
+        return provider.lowercased()
+    }
+
+    private func isEgressIssue(_ account: EgressMappingAccount) -> Bool {
+        account.driftAlerted == true || !(account.consistencyIssues.isEmpty) || (account.driftCount ?? 0) > 0
+    }
+
+    private func compareEgressAccounts(_ left: EgressMappingAccount, _ right: EgressMappingAccount) -> Bool {
+        switch egressSortMode {
+        case .issuesFirst:
+            let leftSeverity = egressIssueSeverity(left)
+            let rightSeverity = egressIssueSeverity(right)
+            if leftSeverity != rightSeverity {
+                return leftSeverity > rightSeverity
+            }
+
+            let leftDrift = left.driftCount ?? 0
+            let rightDrift = right.driftCount ?? 0
+            if leftDrift != rightDrift {
+                return leftDrift > rightDrift
+            }
+        case .driftHighToLow:
+            let leftDrift = left.driftCount ?? 0
+            let rightDrift = right.driftCount ?? 0
+            if leftDrift != rightDrift {
+                return leftDrift > rightDrift
+            }
+        case .account:
+            break
+        }
+
+        let leftProvider = normalizedEgressProvider(left.provider)
+        let rightProvider = normalizedEgressProvider(right.provider)
+        if leftProvider != rightProvider {
+            return leftProvider < rightProvider
+        }
+
+        return egressAccountSortLabel(left).localizedCaseInsensitiveCompare(egressAccountSortLabel(right)) == .orderedAscending
+    }
+
+    private func egressIssueSeverity(_ account: EgressMappingAccount) -> Int {
+        var severity = 0
+        if account.driftAlerted == true {
+            severity += 3
+        }
+        if !account.consistencyIssues.isEmpty {
+            severity += 2
+        }
+        if let status = account.consistencyStatus, !status.isEmpty, status.lowercased() != "ok" {
+            severity += 1
+        }
+        severity += min(account.driftCount ?? 0, 99)
+        return severity
+    }
+
+    private func egressAccountSortLabel(_ account: EgressMappingAccount) -> String {
+        account.authID ?? account.authIndex ?? account.proxyIdentity ?? ""
+    }
+
+    private func localizedConsistencyStatus(_ status: String) -> String {
+        switch status.lowercased() {
+        case "ok":
+            return "status.connected".localized()
+        case "error", "warn", "warning", "inconsistent":
+            return "status.error".localized()
+        default:
+            return status
+        }
+    }
+
+    private func formattedEgressTimestamp(_ timestamp: String?) -> String? {
+        guard let timestamp, !timestamp.isEmpty else {
+            return nil
+        }
+
+        let formatterWithFractional = ISO8601DateFormatter()
+        formatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let formatterStandard = ISO8601DateFormatter()
+        formatterStandard.formatOptions = [.withInternetDateTime]
+
+        guard
+            let date = formatterWithFractional.date(from: timestamp) ?? formatterStandard.date(from: timestamp)
+        else {
+            return timestamp
+        }
+
+        return date.formatted(date: .omitted, time: .shortened)
+    }
 
     private func handleAddProvider(_ provider: AIProvider) {
         // In Local Proxy Mode, require proxy to be running for OAuth
@@ -745,6 +1215,226 @@ struct OAuthSheet: View {
     private var kiroAuthMethods: [AuthCommand] {
         [.kiroImport, .kiroGoogleLogin, .kiroAWSAuthCode, .kiroAWSLogin]
     }
+
+    private var normalizedProjectId: String {
+        projectId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var geminiExistingEmailsForProject: [String] {
+        guard provider == .gemini, !normalizedProjectId.isEmpty else { return [] }
+
+        var matchedEmails = Set<String>()
+
+        for file in viewModel.authFiles where file.providerType == .gemini {
+            let parsed = Self.parseGeminiAuthIdentity(fileName: file.name, account: file.account)
+            guard Self.isGeminiProjectPotentialMatch(existingProject: parsed?.projectId, targetProject: normalizedProjectId) else {
+                continue
+            }
+
+            let candidate = file.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? parsed?.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? file.account?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? file.name
+            if !candidate.isEmpty {
+                matchedEmails.insert(candidate)
+            }
+        }
+
+        for file in viewModel.directAuthFiles where file.provider == .gemini {
+            let parsed = Self.parseGeminiAuthIdentity(fileName: file.filename, account: nil)
+            guard Self.isGeminiProjectPotentialMatch(existingProject: parsed?.projectId, targetProject: normalizedProjectId) else {
+                continue
+            }
+
+            let candidate = file.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? parsed?.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? file.filename
+            if !candidate.isEmpty {
+                matchedEmails.insert(candidate)
+            }
+        }
+
+        return matchedEmails.sorted()
+    }
+
+    private var geminiOverwriteNotice: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("providers.gemini.tip.identity".localized(), systemImage: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            if !geminiExistingEmailsForProject.isEmpty {
+                Text(
+                    String(
+                        format: "providers.gemini.tip.potentialDuplicate".localized(),
+                        normalizedProjectId,
+                        geminiExistingEmailsForProject.joined(separator: ", ")
+                    )
+                )
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                Text("providers.gemini.tip.keepBoth".localized())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.08))
+        )
+    }
+
+    private static func parseGeminiAuthIdentity(fileName: String, account: String?) -> (email: String?, projectId: String?)? {
+        let accountParsed = parseGeminiAccountField(account)
+        let fileParsed = parseGeminiAuthFileName(fileName)
+
+        let email = accountParsed?.email ?? fileParsed?.email
+        let projectId = accountParsed?.projectId ?? fileParsed?.projectId
+
+        if email == nil && projectId == nil {
+            return nil
+        }
+        return (email: email, projectId: projectId)
+    }
+
+    private static func parseGeminiAccountField(_ account: String?) -> (email: String?, projectId: String?)? {
+        guard let rawAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines), !rawAccount.isEmpty else {
+            return nil
+        }
+
+        if let openParen = rawAccount.lastIndex(of: "("),
+           let closeParen = rawAccount.lastIndex(of: ")"),
+           openParen < closeParen {
+            let emailPart = String(rawAccount[..<openParen]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let projectPart = normalizeGeminiProjectIdentifier(
+                String(rawAccount[rawAccount.index(after: openParen)..<closeParen])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            if !emailPart.isEmpty || !projectPart.isEmpty {
+                return (
+                    email: emailPart.isEmpty ? nil : emailPart,
+                    projectId: projectPart.isEmpty ? nil : projectPart
+                )
+            }
+        }
+
+        if rawAccount.contains("@") {
+            return (email: rawAccount, projectId: nil)
+        }
+
+        return nil
+    }
+
+    private static func parseGeminiAuthFileName(_ fileName: String) -> (email: String?, projectId: String?)? {
+        var normalized = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.hasSuffix(".json") {
+            normalized = String(normalized.dropLast(".json".count))
+        }
+
+        if normalized.hasPrefix("gemini-cli-") {
+            normalized = String(normalized.dropFirst("gemini-cli-".count))
+        } else if normalized.hasPrefix("gemini-") {
+            normalized = String(normalized.dropFirst("gemini-".count))
+        } else {
+            return nil
+        }
+
+        guard !normalized.isEmpty else { return nil }
+
+        let emailProjectPattern = #"^(.+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:-(.+))?$"#
+        if let regex = try? NSRegularExpression(pattern: emailProjectPattern) {
+            let fullRange = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+            if let match = regex.firstMatch(in: normalized, options: [], range: fullRange) {
+                let emailValue: String? = {
+                    guard match.range(at: 1).location != NSNotFound,
+                          let range = Range(match.range(at: 1), in: normalized) else {
+                        return nil
+                    }
+                    return String(normalized[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }()
+                let projectValue: String? = {
+                    guard match.range(at: 2).location != NSNotFound,
+                          let range = Range(match.range(at: 2), in: normalized) else {
+                        return nil
+                    }
+                    return normalizeGeminiProjectIdentifier(
+                        String(normalized[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }()
+                return (
+                    email: emailValue?.isEmpty == false ? emailValue : nil,
+                    projectId: projectValue?.isEmpty == false ? projectValue : nil
+                )
+            }
+        }
+
+        guard let separator = normalized.lastIndex(of: "-") else {
+            if normalized.contains("@") {
+                return (email: normalized, projectId: nil)
+            }
+            return nil
+        }
+
+        let emailPart = String(normalized[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let projectPart = normalizeGeminiProjectIdentifier(
+            String(normalized[normalized.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+
+        if !emailPart.contains("@") {
+            return nil
+        }
+
+        return (
+            email: emailPart.isEmpty ? nil : emailPart,
+            projectId: projectPart.isEmpty ? nil : projectPart
+        )
+    }
+
+    private static func normalizeGeminiProjectIdentifier(_ raw: String) -> String {
+        var project = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !project.isEmpty else { return "" }
+        if let separator = project.range(of: "--", options: .backwards) {
+            let suffix = project[separator.upperBound...]
+            let isCredentialSuffix = !suffix.isEmpty && suffix.allSatisfy { $0.isNumber || $0.isLetter }
+            if isCredentialSuffix {
+                project = String(project[..<separator.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return project
+    }
+
+    private static func isGeminiProjectPotentialMatch(existingProject: String?, targetProject: String) -> Bool {
+        let normalizedTarget = targetProject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTarget.isEmpty else { return false }
+
+        guard let rawExisting = existingProject?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawExisting.isEmpty else {
+            return false
+        }
+
+        if rawExisting.caseInsensitiveCompare(normalizedTarget) == .orderedSame {
+            return true
+        }
+
+        let targetLowercased = normalizedTarget.lowercased()
+        let existingLowercased = rawExisting.lowercased()
+        if targetLowercased == "all" || existingLowercased == "all" {
+            return true
+        }
+
+        if rawExisting.contains(",") {
+            let projectTokens = rawExisting
+                .split(separator: ",")
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+            if projectTokens.contains("all") || projectTokens.contains(targetLowercased) {
+                return true
+            }
+        }
+
+        return false
+    }
     
     var body: some View {
         VStack(spacing: 28) {
@@ -767,6 +1457,8 @@ struct OAuthSheet: View {
                         .fontWeight(.medium)
                     TextField("oauth.projectIdPlaceholder".localized(), text: $projectId)
                         .textFieldStyle(.roundedBorder)
+
+                    geminiOverwriteNotice
                 }
                 .frame(maxWidth: 320)
             }
