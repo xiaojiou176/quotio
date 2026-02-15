@@ -62,8 +62,8 @@ struct AgentConfigSheet: View {
                 previewConfig = nil
             }
         }
-        .alert("Error", isPresented: .constant(viewModel.errorMessage != nil)) {
-            Button("OK") { viewModel.errorMessage = nil }
+        .alert("common.error".localized(fallback: "错误"), isPresented: .constant(viewModel.errorMessage != nil)) {
+            Button("action.ok".localized(fallback: "确定")) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
@@ -107,6 +107,8 @@ struct AgentConfigSheet: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("action.close".localized())
+            .help("action.close".localized())
         }
         .padding(16)
     }
@@ -165,7 +167,7 @@ struct AgentConfigSheet: View {
                         systemImage: saved.isProxyConfigured ? "checkmark.circle.fill" : "circle"
                     )
                     .font(.caption)
-                    .foregroundStyle(saved.isProxyConfigured ? .green : .secondary)
+                    .foregroundStyle(saved.isProxyConfigured ? Color.semanticSuccess : .secondary)
                 }
             }
             
@@ -187,7 +189,7 @@ struct AgentConfigSheet: View {
                 .foregroundStyle(.secondary)
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -204,18 +206,18 @@ struct AgentConfigSheet: View {
             if let saved = viewModel.savedConfig, saved.isProxyConfigured {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text("agents.proxyRemovalWarning".localized())
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                 }
                 .padding(8)
-                .background(Color.orange.opacity(0.1))
+                .background(Color.semanticWarning.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -251,7 +253,7 @@ struct AgentConfigSheet: View {
                 .foregroundStyle(.secondary)
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .alert("agents.restoreBackup.confirm.title".localized(), isPresented: $showRestoreConfirm) {
             Button("action.cancel".localized(), role: .cancel) {
@@ -284,7 +286,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -305,7 +307,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -321,7 +323,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -352,7 +354,8 @@ struct AgentConfigSheet: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .help("Refresh models from proxy".localized())
+                .help("agents.refreshModels.help".localized(fallback: "从代理刷新模型列表"))
+                .accessibilityLabel("agents.refreshModels".localized(fallback: "刷新模型"))
                 .disabled(viewModel.isFetchingModels)
             }
             
@@ -370,7 +373,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -390,7 +393,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -417,9 +420,9 @@ struct AgentConfigSheet: View {
             
             if let config = previewConfig, !config.rawConfigs.isEmpty {
                 if config.rawConfigs.count > 1 {
-                    Picker("Config", selection: $viewModel.selectedRawConfigIndex) {
+                    Picker("agents.previewConfig".localized(fallback: "配置"), selection: $viewModel.selectedRawConfigIndex) {
                         ForEach(config.rawConfigs.indices, id: \.self) { index in
-                            Text(config.rawConfigs[index].filename ?? "Config \(index + 1)")
+                            Text(config.rawConfigs[index].filename ?? String(format: "agents.previewConfig.item".localized(fallback: "配置 %d"), index + 1))
                                 .tag(index)
                         }
                     }
@@ -434,7 +437,7 @@ struct AgentConfigSheet: View {
             } else {
                 HStack {
                     SmallProgressView()
-                    Text("Generating preview...")
+                    Text("agents.preview.generating".localized(fallback: "正在生成预览..."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -443,7 +446,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -493,7 +496,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -511,11 +514,11 @@ struct AgentConfigSheet: View {
             VStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 44))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
                 
                 Text("agents.configSuccess".localized())
                     .font(.headline)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
             }
             
             if let result = viewModel.configResult {
@@ -525,7 +528,7 @@ struct AgentConfigSheet: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .padding(12)
-                    .background(Color(.controlBackgroundColor))
+                    .background(Color.semanticSurfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 
                 if result.mode == .automatic {
@@ -564,7 +567,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -588,9 +591,9 @@ struct AgentConfigSheet: View {
             }
             
             if result.rawConfigs.count > 1 {
-                Picker("Config", selection: $viewModel.selectedRawConfigIndex) {
+                Picker("agents.previewConfig".localized(fallback: "配置"), selection: $viewModel.selectedRawConfigIndex) {
                     ForEach(result.rawConfigs.indices, id: \.self) { index in
-                        Text(result.rawConfigs[index].filename ?? "Config \(index + 1)")
+                        Text(result.rawConfigs[index].filename ?? String(format: "agents.previewConfig.item".localized(fallback: "配置 %d"), index + 1))
                             .tag(index)
                     }
                 }
@@ -604,7 +607,7 @@ struct AgentConfigSheet: View {
             }
         }
         .padding(14)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -612,11 +615,11 @@ struct AgentConfigSheet: View {
         VStack(spacing: 14) {
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 44))
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.semanticDanger)
             
             Text("agents.configFailed".localized())
                 .font(.headline)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.semanticDanger)
             
             if let error = viewModel.configResult?.error {
                 Text(error)
@@ -625,7 +628,7 @@ struct AgentConfigSheet: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .padding(12)
-                    .background(Color(.controlBackgroundColor))
+                    .background(Color.semanticSurfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
@@ -691,7 +694,7 @@ private struct ModeButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color(.controlBackgroundColor))
+            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.semanticSurfaceElevated)
             .foregroundStyle(isSelected ? .primary : .secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
@@ -721,7 +724,7 @@ private struct SetupModeButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color(.controlBackgroundColor))
+            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.semanticSurfaceElevated)
             .foregroundStyle(isSelected ? .primary : .secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
@@ -750,7 +753,7 @@ private struct BackupButton: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(.controlBackgroundColor))
+            .background(Color.semanticSurfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
@@ -787,7 +790,7 @@ private struct StorageOptionButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color(.controlBackgroundColor))
+            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.semanticSurfaceElevated)
             .foregroundStyle(isSelected ? .primary : .secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
@@ -829,17 +832,10 @@ private struct ModelSlotRow: View {
     let onModelChange: (String) -> Void
     
     private var effectiveSelection: String {
-        // Check if selected model exists in available list
         if !selectedModel.isEmpty && availableModels.contains(where: { $0.name == selectedModel }) {
             return selectedModel
         }
-        // Check if default model is available
-        if let defaultModel = AvailableModel.defaultModels[slot],
-           availableModels.contains(where: { $0.name == defaultModel.name }) {
-            return defaultModel.name
-        }
-        // Final fallback to first available model
-        return availableModels.first?.name ?? ""
+        return ""
     }
     
     var body: some View {
@@ -854,6 +850,9 @@ private struct ModelSlotRow: View {
                 get: { effectiveSelection },
                 set: { onModelChange($0) }
             )) {
+                Text("agents.unspecified".localized(fallback: "未指定"))
+                    .tag("")
+
                 let providers = Set(availableModels.map { $0.provider }).sorted()
                 
                 ForEach(providers, id: \.self) { provider in
@@ -867,12 +866,8 @@ private struct ModelSlotRow: View {
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 280)
-        }
-        .onAppear {
-            // Trigger fallback update if model is empty or not in available list
-            if selectedModel.isEmpty || !availableModels.contains(where: { $0.name == selectedModel }) {
-                onModelChange(effectiveSelection)
-            }
+            .accessibilityLabel(slot.displayName)
+            .help(slot.displayName)
         }
     }
 }
@@ -883,11 +878,11 @@ private struct TestResultView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(result.success ? .green : .red)
+                .foregroundStyle(result.success ? Color.semanticSuccess : Color.semanticDanger)
             
             Text(result.message)
                 .font(.caption)
-                .foregroundStyle(result.success ? .green : .red)
+                .foregroundStyle(result.success ? Color.semanticSuccess : Color.semanticDanger)
             
             Spacer()
             
@@ -899,7 +894,7 @@ private struct TestResultView: View {
             }
         }
         .padding(10)
-        .background(result.success ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
+        .background(result.success ? Color.semanticSuccess.opacity(0.1) : Color.semanticDanger.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -953,8 +948,8 @@ private struct RawConfigView: View {
                     .fontWeight(.medium)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.blue.opacity(0.1))
-                    .foregroundStyle(.blue)
+                    .background(Color.semanticSelectionFill)
+                    .foregroundStyle(Color.semanticInfo)
                     .clipShape(Capsule())
                 
                 Button {
@@ -964,6 +959,8 @@ private struct RawConfigView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("action.copy".localized())
+                .help("action.copy".localized())
             }
             
             ScrollView {

@@ -345,6 +345,23 @@ actor AgentConfigurationService {
         }
         return value.isEmpty ? nil : value
     }
+
+    private enum RequiredModelLookupError: Error {
+        case configResult(AgentConfigResult)
+    }
+
+    private func requireModel(_ slot: ModelSlot, from config: AgentConfiguration, for agent: CLIAgent) -> Result<String, RequiredModelLookupError> {
+        guard let raw = config.modelSlots[slot] else {
+            return .failure(.configResult(.failure(error: "Model not detected for \(agent.displayName) slot '\(slot.rawValue)'. Please select a model explicitly.")))
+        }
+
+        let model = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else {
+            return .failure(.configResult(.failure(error: "Model not detected for \(agent.displayName) slot '\(slot.rawValue)'. Please select a model explicitly.")))
+        }
+
+        return .success(model)
+    }
     
     func generateConfiguration(
         agent: CLIAgent,
@@ -739,13 +756,33 @@ actor AgentConfigurationService {
     /// - Each backup is unique and never overwritten
     /// - All previous backups are preserved
     private func generateClaudeCodeConfig(config: AgentConfiguration, mode: ConfigurationMode, storageOption: ConfigStorageOption) -> AgentConfigResult {
+        let opusModel: String
+        switch requireModel(.opus, from: config, for: .claudeCode) {
+        case .success(let model):
+            opusModel = model
+        case .failure(.configResult(let result)):
+            return result
+        }
+
+        let sonnetModel: String
+        switch requireModel(.sonnet, from: config, for: .claudeCode) {
+        case .success(let model):
+            sonnetModel = model
+        case .failure(.configResult(let result)):
+            return result
+        }
+
+        let haikuModel: String
+        switch requireModel(.haiku, from: config, for: .claudeCode) {
+        case .success(let model):
+            haikuModel = model
+        case .failure(.configResult(let result)):
+            return result
+        }
+
         let home = fileManager.homeDirectoryForCurrentUser.path
         let configDir = "\(home)/.claude"
         let configPath = "\(configDir)/settings.json"
-
-        let opusModel = config.modelSlots[.opus] ?? "gemini-claude-opus-4-5-thinking"
-        let sonnetModel = config.modelSlots[.sonnet] ?? "gemini-claude-sonnet-4-5"
-        let haikuModel = config.modelSlots[.haiku] ?? "gemini-3-flash-preview"
         let baseURL = config.proxyURL.replacingOccurrences(of: "/v1", with: "")
 
         // Quotio-managed env keys (will be updated/added)
@@ -862,6 +899,14 @@ actor AgentConfigurationService {
     }
     
     private func generateCodexConfig(config: AgentConfiguration, mode: ConfigurationMode) async throws -> AgentConfigResult {
+        let codexModel: String
+        switch requireModel(.sonnet, from: config, for: .codexCLI) {
+        case .success(let model):
+            codexModel = model
+        case .failure(.configResult(let result)):
+            return result
+        }
+
         let home = fileManager.homeDirectoryForCurrentUser.path
         let codexDir = "\(home)/.codex"
         let configPath = "\(codexDir)/config.toml"
@@ -870,7 +915,7 @@ actor AgentConfigurationService {
         let configTOML = """
         # CLIProxyAPI Configuration for Codex CLI
         model_provider = "cliproxyapi"
-        model = "\(config.modelSlots[.sonnet] ?? "gpt-5-codex")"
+        model = "\(codexModel)"
         model_reasoning_effort = "high"
 
         [model_providers.cliproxyapi]

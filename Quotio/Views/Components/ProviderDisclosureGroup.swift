@@ -19,12 +19,22 @@ struct ProviderDisclosureGroup: View {
     var onSwitchAccount: ((AccountRowData) -> Void)?
     var onToggleDisabled: ((AccountRowData) -> Void)?
     var isAccountActive: ((AccountRowData) -> Bool)?
+    var compactMode: Bool = false
 
     @State private var isExpanded: Bool = true
+    @State private var uiExperience = UIExperienceSettingsManager.shared
+    @State private var featureFlags = FeatureFlagManager.shared
 
     /// Check if all accounts in this group are auto-detected
     private var isAllAutoDetected: Bool {
         accounts.allSatisfy { $0.source == .autoDetected }
+    }
+
+    private var issueCount: Int {
+        accounts.filter { account in
+            let status = (account.status ?? "").lowercased()
+            return status == "error" || status == "cooling" || account.isDisabled
+        }.count
     }
 
     var body: some View {
@@ -36,9 +46,11 @@ struct ProviderDisclosureGroup: View {
                     onEdit: onEditAccount != nil ? { onEditAccount?(account) } : nil,
                     onSwitch: onSwitchAccount != nil ? { onSwitchAccount?(account) } : nil,
                     onToggleDisabled: onToggleDisabled != nil ? { onToggleDisabled?(account) } : nil,
-                    isActiveInIDE: isAccountActive?(account) ?? false
+                    isActiveInIDE: isAccountActive?(account) ?? false,
+                    compactMode: compactMode
                 )
                 .padding(.leading, 4)
+                .frame(minHeight: uiExperience.recommendedMinimumRowHeight)
             }
         } label: {
             providerHeader
@@ -62,9 +74,26 @@ struct ProviderDisclosureGroup: View {
                 .fontWeight(.semibold)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(provider.color.opacity(0.15))
-                .foregroundStyle(provider.color)
+                .background(Color.secondary.opacity(0.12))
+                .foregroundStyle(.secondary)
                 .clipShape(Capsule())
+
+            if featureFlags.enhancedUILayout && issueCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text("\(issueCount)")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.semanticWarning.opacity(0.15))
+                    .foregroundStyle(Color.semanticWarning)
+                    .clipShape(Capsule())
+                    .accessibilityLabel("providers.issues".localized(fallback: "异常数量"))
+                    .accessibilityValue("\(issueCount)")
+            }
             
             Spacer()
             

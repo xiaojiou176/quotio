@@ -16,6 +16,9 @@ final class LogsViewModel {
     private var apiClient: ManagementAPIClient?
     
     var logs: [LogEntry] = []
+    var isRefreshing = false
+    var hasLoadedOnce = false
+    var refreshError: String?
     @ObservationIgnored private var lastLogTimestamp: Int?
     
     /// Configure the API client for fetching logs
@@ -30,8 +33,14 @@ final class LogsViewModel {
     
     /// Refresh logs from the proxy server
     func refreshLogs() async {
-        guard let client = apiClient else { return }
-        
+        guard let client = apiClient else {
+            refreshError = "logs.error.notConfigured".localized(fallback: "日志服务尚未配置")
+            return
+        }
+
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         do {
             let response = try await client.fetchLogs(after: lastLogTimestamp)
             if let lines = response.lines {
@@ -55,8 +64,10 @@ final class LogsViewModel {
                 }
             }
             lastLogTimestamp = response.latestTimestamp
+            refreshError = nil
+            hasLoadedOnce = true
         } catch {
-            // Silently ignore log fetch errors
+            refreshError = error.localizedDescription
         }
     }
     
@@ -68,8 +79,10 @@ final class LogsViewModel {
             try await client.clearLogs()
             logs.removeAll()
             lastLogTimestamp = nil
+            refreshError = nil
+            hasLoadedOnce = true
         } catch {
-            // Silently ignore clear errors
+            refreshError = error.localizedDescription
         }
     }
     
@@ -77,6 +90,9 @@ final class LogsViewModel {
     func reset() {
         logs.removeAll()
         lastLogTimestamp = nil
+        isRefreshing = false
+        hasLoadedOnce = false
+        refreshError = nil
         apiClient = nil
     }
 }

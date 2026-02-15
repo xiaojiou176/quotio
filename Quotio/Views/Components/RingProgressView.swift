@@ -30,7 +30,7 @@ struct RingProgressView: View {
                 .trim(from: 0, to: clamped / 100)
                 .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.smooth(duration: 0.3), value: clamped)
+                .motionAwareAnimation(.smooth(duration: 0.3), value: clamped)
             
             // Optional center label
             if showLabel {
@@ -42,14 +42,15 @@ struct RingProgressView: View {
         .frame(width: size, height: size)
         .accessibilityLabel("usage.ring".localized())
         .accessibilityValue(String(format: "%lld percent".localized(), Int64(clamped)))
+        .accessibilityHint("usage.ring.hint".localized(fallback: "环形图显示当前使用百分比"))
     }
 }
 
 #Preview {
     HStack(spacing: 20) {
-        RingProgressView(percent: 75, tint: .green, showLabel: true)
-        RingProgressView(percent: 30, tint: .yellow, showLabel: true)
-        RingProgressView(percent: 5, tint: .red, showLabel: true)
+        RingProgressView(percent: 75, tint: .semanticSuccess, showLabel: true)
+        RingProgressView(percent: 30, tint: .semanticWarning, showLabel: true)
+        RingProgressView(percent: 5, tint: .semanticDanger, showLabel: true)
     }
     .padding()
 }

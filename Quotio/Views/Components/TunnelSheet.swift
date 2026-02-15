@@ -20,7 +20,7 @@ struct TunnelSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             headerView
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(Color.semanticSurfaceBase)
             
             Divider()
             
@@ -44,12 +44,12 @@ struct TunnelSheet: View {
                 }
                 .padding(24)
             }
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(Color.semanticSurfaceElevated)
             
             Divider()
             
             footerView
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(Color.semanticSurfaceBase)
         }
         .frame(width: 520, height: 450)
     }
@@ -62,7 +62,7 @@ struct TunnelSheet: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [.blue.opacity(0.15), .purple.opacity(0.1)],
+                            colors: [Color.semanticInfo.opacity(0.15), Color.semanticAccentSecondary.opacity(0.1)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -77,12 +77,12 @@ struct TunnelSheet: View {
                     .font(.system(size: 24))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [.blue, .purple],
+                            colors: [Color.semanticInfo, Color.semanticAccentSecondary],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .shadow(color: .blue.opacity(0.3), radius: 4, x: 0, y: 2)
+                    .shadow(color: Color.semanticInfo.opacity(0.3), radius: 4, x: 0, y: 2)
             }
             
             VStack(alignment: .leading, spacing: 4) {
@@ -104,6 +104,8 @@ struct TunnelSheet: View {
                     .foregroundStyle(.secondary.opacity(0.8))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("action.close".localized())
+            .help("action.close".localized())
             .onHover { inside in
                 if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
@@ -118,7 +120,7 @@ struct TunnelSheet: View {
                     Text("tunnel.status".localized())
                         .font(.headline)
                     
-                    Text("localhost:" + String(proxyPort))
+                    Text("tunnel.localhostPrefix".localized(fallback: "localhost:") + String(proxyPort))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospaced()
@@ -150,14 +152,14 @@ struct TunnelSheet: View {
                         .frame(width: 80)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(tunnelManager.tunnelState.isActive ? .red : .blue)
+                .tint(tunnelManager.tunnelState.isActive ? Color.semanticDanger : Color.semanticInfo)
                 .disabled(tunnelManager.tunnelState.isTransitioning)
                 .controlSize(.regular)
             }
             .padding(16)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+            .background(Color.semanticSurfaceBase.opacity(0.5))
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.semanticSurfaceBase)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -194,13 +196,14 @@ struct TunnelSheet: View {
                 .background(Color.primary.opacity(0.05))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .help("action.copy".localized())
+                .accessibilityLabel("action.copy".localized())
             }
             .padding(12)
-            .background(Color.green.opacity(0.08))
+            .background(Color.semanticSuccess.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.green.opacity(0.2), lineWidth: 1)
+                    .strokeBorder(Color.semanticSuccess.opacity(0.2), lineWidth: 1)
             )
             
             if let startTime = tunnelManager.tunnelState.startTime {
@@ -215,7 +218,7 @@ struct TunnelSheet: View {
             }
         }
         .padding(16)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.semanticSurfaceBase)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -228,12 +231,12 @@ struct TunnelSheet: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.semanticDanger)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text("tunnel.error.title".localized())
                     .font(.headline)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.semanticDanger)
                 
                 Text(message)
                     .font(.subheadline)
@@ -243,11 +246,11 @@ struct TunnelSheet: View {
             Spacer()
         }
         .padding(16)
-        .background(Color.red.opacity(0.05))
+        .background(Color.semanticDanger.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.red.opacity(0.2), lineWidth: 1)
+                .strokeBorder(Color.semanticDanger.opacity(0.2), lineWidth: 1)
         )
     }
     
@@ -259,7 +262,7 @@ struct TunnelSheet: View {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow {
                     Image(systemName: "bolt.fill")
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(Color.semanticWarning)
                         .frame(width: 20)
                     Text("tunnel.info.quick".localized())
                         .font(.subheadline)
@@ -268,7 +271,7 @@ struct TunnelSheet: View {
                 
                 GridRow {
                     Image(systemName: "clock")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.semanticInfo)
                         .frame(width: 20)
                     Text("tunnel.info.temporary".localized())
                         .font(.subheadline)
@@ -286,7 +289,7 @@ struct TunnelSheet: View {
             }
         }
         .padding(16)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.semanticSurfaceBase)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -299,7 +302,7 @@ struct TunnelSheet: View {
         VStack(spacing: 16) {
             Image(systemName: "externaldrive.badge.xmark")
                 .font(.system(size: 48))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Color.semanticWarning)
                 .padding(.bottom, 8)
             
             VStack(spacing: 6) {
@@ -330,6 +333,8 @@ struct TunnelSheet: View {
                         Image(systemName: "doc.on.doc")
                     }
                     .buttonStyle(.bordered)
+                    .help("action.copy".localized())
+                    .accessibilityLabel("action.copy".localized())
                 }
                 
                 Link(destination: URL(string: "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")!) {
@@ -339,7 +344,7 @@ struct TunnelSheet: View {
                 }
             }
             .padding()
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color.semanticSurfaceBase)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .padding()
@@ -351,9 +356,9 @@ struct TunnelSheet: View {
                 if let version = tunnelManager.installation.version {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(.green)
+                            .fill(Color.semanticSuccess)
                             .frame(width: 6, height: 6)
-                        Text("cloudflared v" + version)
+                        Text(String(format: "tunnel.cloudflaredVersion".localized(), version))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

@@ -50,6 +50,7 @@ final class QuotaViewModel {
     @ObservationIgnored private var lastKnownAccountStatuses: [String: String] = [:]
     
     var currentPage: NavigationPage = .dashboard
+    var observabilityFocusFilter: ObservabilityFocusFilter?
     var authFiles: [AuthFile] = []
     var usageStats: UsageStats?
     var apiKeys: [String] = []
@@ -60,6 +61,10 @@ final class QuotaViewModel {
 
     /// Notification name for quota data updates (used for menu bar refresh)
     static let quotaDataDidChangeNotification = Notification.Name("QuotaViewModel.quotaDataDidChange")
+
+    func setObservabilityFocus(_ filter: ObservabilityFocusFilter?) {
+        observabilityFocusFilter = filter
+    }
     
     /// Direct auth files for quota-only mode
     var directAuthFiles: [DirectAuthFile] = []
@@ -95,11 +100,13 @@ final class QuotaViewModel {
     let antigravitySwitcher = AntigravityAccountSwitcher.shared
     
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var codexAutoRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var warmupTask: Task<Void, Never>?
     @ObservationIgnored private var isStartingProxyFlow = false
     @ObservationIgnored private var lastLogTimestamp: Int?
     @ObservationIgnored private var isWarmupRunning = false
     @ObservationIgnored private var warmupRunningAccounts: Set<WarmupAccountKey> = []
+    @ObservationIgnored private let codexAutoRefreshIntervalNs: UInt64 = 60_000_000_000
 
     struct WarmupStatus: Sendable {
         var isRunning: Bool = false
@@ -252,6 +259,7 @@ final class QuotaViewModel {
         } else {
             startQuotaAutoRefreshWithoutProxy()
         }
+        restartCodexAutoRefresh()
     }
     
     // MARK: - Mode-Aware Initialization
@@ -269,6 +277,7 @@ final class QuotaViewModel {
     private func initializeFullMode() async {
         // Always refresh quotas directly first (works without proxy)
         await refreshQuotasUnified()
+        restartCodexAutoRefresh()
         
         let autoStartProxy = UserDefaults.standard.bool(forKey: "autoStartProxy")
         if autoStartProxy && proxyManager.isBinaryInstalled {
@@ -295,9 +304,11 @@ final class QuotaViewModel {
         
         // Start auto-refresh for quota-only mode
         startQuotaOnlyAutoRefresh()
+        restartCodexAutoRefresh()
     }
     
     private func initializeRemoteMode() async {
+        stopCodexAutoRefresh()
         guard modeManager.hasValidRemoteConfig,
               let config = modeManager.remoteConfig,
               let managementKey = modeManager.remoteManagementKey else {
@@ -449,13 +460,18 @@ final class QuotaViewModel {
     
     /// Refresh Codex quota using CLI auth file (~/.codex/auth.json)
     private func refreshCodexCLIQuotasInternal() async {
-        // Only use CLI fetcher if proxy is not available or in quota-only mode
-        // The openAIFetcher handles Codex via proxy auth files
-        guard modeManager.isMonitorMode else { return }
+        await refreshCodexCLIQuotasFallback(allowAllModes: false)
+    }
 
-        // Skip if OpenAI fetcher already populated codex quotas (avoids duplicate entries
-        // since OpenAIQuotaFetcher keys by filename while CodexCLIFetcher keys by JWT email)
-        if let existing = providerQuotas[.codex], !existing.isEmpty { return }
+    /// Use Codex CLI as fallback source when proxy auth-based data is absent.
+    private func refreshCodexCLIQuotasFallback(allowAllModes: Bool) async {
+        if !allowAllModes && !modeManager.isMonitorMode {
+            return
+        }
+
+        if let existing = providerQuotas[.codex], !existing.isEmpty {
+            return
+        }
 
         let quotas = await codexCLIFetcher.fetchAsProviderQuota()
         if !quotas.isEmpty {
@@ -616,6 +632,35 @@ final class QuotaViewModel {
                 }
             }
         }
+    }
+
+    /// Codex quota evidence should refresh independently of generic refresh cadence.
+    private func restartCodexAutoRefresh() {
+        codexAutoRefreshTask?.cancel()
+        codexAutoRefreshTask = nil
+
+        guard !modeManager.isRemoteProxyMode else { return }
+
+        codexAutoRefreshTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: codexAutoRefreshIntervalNs)
+                await refreshCodexQuotaEvidence()
+            }
+        }
+    }
+
+    private func stopCodexAutoRefresh() {
+        codexAutoRefreshTask?.cancel()
+        codexAutoRefreshTask = nil
+    }
+
+    private func refreshCodexQuotaEvidence() async {
+        guard !modeManager.isRemoteProxyMode else { return }
+        guard !isLoadingQuotas else { return }
+
+        await refreshOpenAIQuotasInternal()
+        await refreshCodexCLIQuotasFallback(allowAllModes: true)
+        notifyQuotaDataChanged()
     }
 
     // MARK: - Warmup
@@ -987,6 +1032,7 @@ final class QuotaViewModel {
             try await proxyManager.start()
             setupAPIClient()
             startAutoRefresh()
+            restartCodexAutoRefresh()
             restartWarmupScheduler()
 
             // Start RequestTracker
@@ -1017,6 +1063,7 @@ final class QuotaViewModel {
     func stopProxy() {
         refreshTask?.cancel()
         refreshTask = nil
+        restartCodexAutoRefresh()
 
         if tunnelManager.tunnelState.isActive || tunnelManager.tunnelState.status == .starting {
             Task { @MainActor in
@@ -1240,7 +1287,7 @@ final class QuotaViewModel {
 
     private func refreshAntigravityQuotasInternal() async {
         // Fetch both quotas and subscriptions in one call (avoids duplicate API calls)
-        let (quotas, subscriptions) = await antigravityFetcher.fetchAllAntigravityData()
+        let (quotas, subscriptions) = await antigravityFetcher.fetchAllAntigravityData(authDir: proxyManager.authDir)
         
         providerQuotas[.antigravity] = quotas
         
@@ -1304,12 +1351,13 @@ final class QuotaViewModel {
     }
     
     private func refreshOpenAIQuotasInternal() async {
-        let quotas = await openAIFetcher.fetchAllCodexQuotas()
+        // Use proxyManager's authDir (which points to ~/.cli-proxy-api)
+        let quotas = await openAIFetcher.fetchAllCodexQuotas(authDir: proxyManager.authDir)
         providerQuotas[.codex] = quotas
     }
     
     private func refreshCopilotQuotasInternal() async {
-        let quotas = await copilotFetcher.fetchAllCopilotQuotas()
+        let quotas = await copilotFetcher.fetchAllCopilotQuotas(authDir: proxyManager.authDir)
         providerQuotas[.copilot] = quotas
     }
     
@@ -1319,7 +1367,7 @@ final class QuotaViewModel {
             await refreshAntigravityQuotasInternal()
         case .codex:
             await refreshOpenAIQuotasInternal()
-            await refreshCodexCLIQuotasInternal()
+            await refreshCodexCLIQuotasFallback(allowAllModes: true)
         case .copilot:
             await refreshCopilotQuotasInternal()
         case .claude:

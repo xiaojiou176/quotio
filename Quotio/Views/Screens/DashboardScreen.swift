@@ -70,6 +70,27 @@ struct DashboardScreen: View {
     private var groupedDirectAuthFiles: [AIProvider: [DirectAuthFile]] {
         Dictionary(grouping: viewModel.directAuthFiles) { $0.provider }
     }
+
+    private var riskAccounts: [AuthFile] {
+        let scored: [(AuthFile, Int)] = viewModel.authFiles.map { file in
+            var score = 0
+            if file.disabledByPolicy == true { score += 100 }
+            if file.status == "error" { score += 60 }
+            if file.status == "cooling" { score += 30 }
+            if file.isNetworkError { score += 20 }
+            if file.isQuotaLimited7d { score += 15 }
+            if file.isQuotaLimited5h { score += 10 }
+            return (file, score)
+        }
+        return scored
+            .filter { $0.1 > 0 }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0.name < rhs.0.name
+            }
+            .prefix(5)
+            .map(\.0)
+    }
     
     var body: some View {
         ScrollView {
@@ -108,6 +129,8 @@ struct DashboardScreen: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(viewModel.isLoadingQuotas)
+                .accessibilityLabel("action.refresh".localized())
+                .help("action.refresh".localized())
             }
         }
         .sheet(item: $selectedProvider) { provider in
@@ -155,6 +178,7 @@ struct DashboardScreen: View {
             }
             
             kpiSection
+            operationsCenterSection
             providerSection
             endpointSection
             tunnelSection
@@ -188,6 +212,7 @@ struct DashboardScreen: View {
             case .connected:
                 // Connected - show full dashboard similar to local mode
                 kpiSection
+                operationsCenterSection
                 providerSection
                 remoteEndpointSection
             case .connecting:
@@ -228,10 +253,10 @@ struct DashboardScreen: View {
     
     private var connectionStatusColor: Color {
         switch modeManager.connectionStatus {
-        case .connected: return .green
-        case .connecting: return .orange
+        case .connected: return Color.semanticSuccess
+        case .connecting: return Color.semanticWarning
         case .disconnected: return .gray
-        case .error: return .red
+        case .error: return Color.semanticDanger
         }
     }
     
@@ -328,6 +353,8 @@ struct DashboardScreen: View {
                     Image(systemName: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("action.copy".localized())
+                .help("action.copy".localized())
             }
         } label: {
             Label("dashboard.remoteEndpoint".localized(), systemImage: "link")
@@ -341,7 +368,7 @@ struct DashboardScreen: View {
                 value: "\(viewModel.directAuthFiles.count)",
                 subtitle: "dashboard.accounts".localized(),
                 icon: "person.2.fill",
-                color: .blue
+                color: Color.semanticInfo
             )
             
             KPICard(
@@ -349,7 +376,7 @@ struct DashboardScreen: View {
                 value: "\(directProvidersCount)",
                 subtitle: "dashboard.connected".localized(),
                 icon: "cpu",
-                color: .green
+                color: Color.semanticSuccess
             )
             
             // Show lowest quota percentage (precomputed)
@@ -358,7 +385,7 @@ struct DashboardScreen: View {
                 value: String(format: "%.0f%%", lowestQuotaPercentage),
                 subtitle: "dashboard.remaining".localized(),
                 icon: "chart.bar.fill",
-                color: lowestQuotaPercentage > 50 ? .green : (lowestQuotaPercentage > 20 ? .orange : .red)
+                color: lowestQuotaPercentage > 50 ? Color.semanticSuccess : (lowestQuotaPercentage > 20 ? Color.semanticWarning : Color.semanticDanger)
             )
             
             if let lastRefresh = viewModel.lastQuotaRefreshTime {
@@ -367,7 +394,7 @@ struct DashboardScreen: View {
                     value: lastRefresh.formatted(date: .omitted, time: .shortened),
                     subtitle: "dashboard.updated".localized(),
                     icon: "clock.fill",
-                    color: .purple
+                    color: Color.semanticAccentSecondary
                 )
             }
         }
@@ -497,7 +524,7 @@ struct DashboardScreen: View {
             if let error = viewModel.proxyManager.lastError {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.semanticDanger)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 300)
@@ -624,7 +651,7 @@ struct DashboardScreen: View {
                 value: "\(viewModel.totalAccounts)",
                 subtitle: "\(viewModel.readyAccounts) " + "dashboard.ready".localized(),
                 icon: "person.2.fill",
-                color: .blue
+                color: Color.semanticInfo
             )
             
             KPICard(
@@ -632,7 +659,7 @@ struct DashboardScreen: View {
                 value: "\(viewModel.usageStats?.usage?.totalRequests ?? 0)",
                 subtitle: "dashboard.total".localized(),
                 icon: "arrow.up.arrow.down",
-                color: .green
+                color: Color.semanticSuccess
             )
             
             KPICard(
@@ -640,7 +667,7 @@ struct DashboardScreen: View {
                 value: (viewModel.usageStats?.usage?.totalTokens ?? 0).formattedCompact,
                 subtitle: "dashboard.processed".localized(),
                 icon: "text.word.spacing",
-                color: .purple
+                color: Color.semanticAccentSecondary
             )
             
             KPICard(
@@ -648,8 +675,62 @@ struct DashboardScreen: View {
                 value: String(format: "%.0f%%", viewModel.usageStats?.usage?.successRate ?? 0.0),
                 subtitle: "\(viewModel.usageStats?.usage?.failureCount ?? 0) " + "dashboard.failed".localized(),
                 icon: "checkmark.circle.fill",
-                color: .orange
+                color: Color.semanticWarning
             )
+        }
+    }
+
+    private var operationsCenterSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("dashboard.operationsCenter.title".localized(fallback: "指挥中心"), systemImage: "dot.radiowaves.up.forward")
+                        .font(.headline)
+                    Spacer()
+                    Text("\("dashboard.operationsCenter.riskCount".localized(fallback: "风险账号")) \(riskAccounts.count)")
+                        .font(.caption)
+                        .foregroundStyle(riskAccounts.isEmpty ? Color.secondary : Color.semanticWarning)
+                }
+
+                if riskAccounts.isEmpty {
+                    Label("dashboard.operationsCenter.noRisk".localized(fallback: "当前无高风险账号"), systemImage: "checkmark.seal")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(riskAccounts, id: \.id) { account in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(account.isFatalDisabled ? Color.semanticDanger : (account.status == "error" ? Color.semanticWarning : Color.semanticInfo))
+                                .frame(width: 6, height: 6)
+                            Text(account.name.masked(if: MenuBarSettingsManager.shared.hideSensitiveInfo))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Text(account.errorKind ?? account.status)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button("dashboard.operationsCenter.inspectQuota".localized(fallback: "查看配额异常")) {
+                        viewModel.currentPage = .quota
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    if modeManager.isProxyMode {
+                        Button("dashboard.operationsCenter.inspectLogs".localized(fallback: "打开日志排查")) {
+                            viewModel.currentPage = .logs
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
         }
     }
     
@@ -726,6 +807,8 @@ struct DashboardScreen: View {
                     Image(systemName: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("action.copy".localized())
+                .help("action.copy".localized())
             }
         } label: {
             Label("dashboard.apiEndpoint".localized(), systemImage: "link")
@@ -741,7 +824,7 @@ struct DashboardScreen: View {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [.blue.opacity(0.15), .purple.opacity(0.1)],
+                                colors: [Color.semanticInfo.opacity(0.15), Color.semanticAccentSecondary.opacity(0.1)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -756,12 +839,12 @@ struct DashboardScreen: View {
                         .font(.system(size: 24))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [.blue, .purple],
+                                colors: [Color.semanticInfo, Color.semanticAccentSecondary],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .shadow(color: .blue.opacity(0.3), radius: 4, x: 0, y: 2)
+                        .shadow(color: Color.semanticInfo.opacity(0.3), radius: 4, x: 0, y: 2)
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -796,6 +879,7 @@ struct DashboardScreen: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .accessibilityLabel("action.copy".localized())
                     .help("action.copy".localized())
                 }
                 
@@ -804,9 +888,11 @@ struct DashboardScreen: View {
                 } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 12))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityLabel("settings.config".localized())
+                    .help("settings.config".localized())
             }
         } label: {
             Label("tunnel.section.label".localized(), systemImage: "network")
@@ -839,7 +925,7 @@ struct GettingStartedStepRow: View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(step.isCompleted ? Color.green : Color.accentColor.opacity(0.15))
+                    .fill(step.isCompleted ? Color.semanticSuccess : Color.accentColor.opacity(0.15))
                     .frame(width: 40, height: 40)
                 
                 if step.isCompleted {
@@ -860,7 +946,7 @@ struct GettingStartedStepRow: View {
                     
                     if step.isCompleted {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Color.semanticSuccess)
                             .font(.caption)
                     }
                 }
@@ -942,6 +1028,7 @@ struct ProviderChipWithAdd: View {
     let provider: AIProvider
     let count: Int
     @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     var body: some View {
         HStack(spacing: 6) {
@@ -969,7 +1056,7 @@ struct ProviderChipWithAdd: View {
         )
         .foregroundStyle(provider.color)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                 isHovering = hovering
             }
         }
@@ -1029,9 +1116,9 @@ struct QuotaProviderRow: View {
     }
     
     private var quotaColor: Color {
-        if lowestQuota > 50 { return .green }
-        if lowestQuota > 20 { return .orange }
-        return .red
+        if lowestQuota > 50 { return Color.semanticSuccess }
+        if lowestQuota > 20 { return Color.semanticWarning }
+        return Color.semanticDanger
     }
     
     var body: some View {

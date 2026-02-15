@@ -22,6 +22,8 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Services/CLAUDE.md,
+				Views/CLAUDE.md,
 			);
 			target = 78D386932EFBF30400C40FB6 /* Quotio */;
 		};

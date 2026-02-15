@@ -100,7 +100,7 @@ final class AgentSetupViewModel {
             endpoint = proxyManager.clientEndpoint
         }
 
-        // Create configuration with defaults first
+        // Create configuration shell first; model slots will be loaded from saved config or user selection
         currentConfiguration = AgentConfiguration(
             agent: agent,
             proxyURL: endpoint + "/v1",

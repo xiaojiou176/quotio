@@ -140,7 +140,7 @@ struct WarmupSheet: View {
         HStack(spacing: 12) {
             Image(systemName: "bolt.fill")
                 .font(.title2)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Color.semanticWarning)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text("warmup.title".localized())
@@ -173,6 +173,8 @@ struct WarmupSheet: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
+                .accessibilityLabel("warmup.time.title".localized())
+                .help("warmup.time.title".localized())
             }
             
             if warmupSettings.warmupScheduleMode(provider: provider, accountKey: accountKey) == .interval {
@@ -189,6 +191,8 @@ struct WarmupSheet: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .accessibilityLabel("warmup.interval.label".localized())
+                    .help("warmup.interval.label".localized())
                 }
             } else {
                 HStack {

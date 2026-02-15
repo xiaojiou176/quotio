@@ -57,7 +57,7 @@ struct CurrentModeBadge: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .help("sidebar.modeBadge.hint".localized())
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .motionAwareAnimation(.easeInOut(duration: 0.15), value: isHovered)
     }
     
     private var modeName: String {

@@ -9,6 +9,7 @@ struct QuotaCard: View {
     let provider: AIProvider
     let accounts: [AuthFile]
     var quotaData: [String: ProviderQuotaData]?
+    @State private var uiExperience = UIExperienceSettingsManager.shared
     
     private var readyCount: Int {
         accounts.filter { $0.status == "ready" && !$0.disabled }.count
@@ -67,6 +68,13 @@ struct QuotaCard: View {
             }
             .padding(4)
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    uiExperience.highContrastEnabled ? Color.primary.opacity(0.35) : Color.clear,
+                    lineWidth: 1
+                )
+        )
     }
     
     // MARK: - Header
@@ -86,13 +94,16 @@ struct QuotaCard: View {
             Spacer()
             
             HStack(spacing: 4) {
-                Circle()
-                    .fill(readyCount > 0 ? .green : (coolingCount > 0 ? .orange : .red))
-                    .frame(width: 10, height: 10)
+                Image(systemName: readyCount > 0 ? "checkmark.circle.fill" : (coolingCount > 0 ? "clock.badge.exclamationmark" : "xmark.circle.fill"))
+                    .font(.caption)
+                    .foregroundStyle(readyCount > 0 ? Color.semanticSuccess : (coolingCount > 0 ? Color.semanticWarning : Color.semanticDanger))
                 Text(readyCount > 0 ? "Available" : (coolingCount > 0 ? "Cooling" : "Error"))
                     .font(.caption)
                     .fontWeight(.medium)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("quota.status.summary".localized(fallback: "状态摘要"))
+            .accessibilityValue(readyCount > 0 ? "Available" : (coolingCount > 0 ? "Cooling" : "Error"))
         }
     }
     
@@ -107,7 +118,7 @@ struct QuotaCard: View {
                         title: displayName,
                         remainingPercent: data.remainingPercent,
                         resetTime: data.resetTime,
-                        tint: data.remainingPercent > 50 ? .green : (data.remainingPercent > 20 ? .orange : .red)
+                        tint: data.remainingPercent > 50 ? Color.semanticSuccess : (data.remainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
                     )
                 }
             }
@@ -122,7 +133,7 @@ struct QuotaCard: View {
                 title: "Session",
                 remainingPercent: sessionRemainingPercent,
                 resetTime: sessionResetTime,
-                tint: sessionRemainingPercent > 50 ? .green : (sessionRemainingPercent > 20 ? .orange : .red)
+                tint: sessionRemainingPercent > 50 ? Color.semanticSuccess : (sessionRemainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
             )
             
             if provider == .claude || provider == .codex {
@@ -130,7 +141,7 @@ struct QuotaCard: View {
                     title: "Weekly",
                     remainingPercent: weeklyRemainingPercent,
                     resetTime: weeklyResetTime,
-                    tint: weeklyRemainingPercent > 50 ? .green : (weeklyRemainingPercent > 20 ? .orange : .red)
+                    tint: weeklyRemainingPercent > 50 ? Color.semanticSuccess : (weeklyRemainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
                 )
             }
         }
@@ -181,9 +192,9 @@ struct QuotaCard: View {
     
     private var statusBreakdownSection: some View {
         HStack(spacing: 16) {
-            StatusBadge(count: readyCount, label: "Ready", color: .green)
-            StatusBadge(count: coolingCount, label: "Cooling", color: .orange)
-            StatusBadge(count: errorCount, label: "Error", color: .red)
+            StatusBadge(count: readyCount, label: "quota.health.ready".localized(fallback: "可用"), color: .semanticSuccess)
+            StatusBadge(count: coolingCount, label: "quota.health.cooling".localized(fallback: "冷却中"), color: .semanticWarning)
+            StatusBadge(count: errorCount, label: "quota.health.error".localized(fallback: "错误"), color: .semanticDanger)
         }
         .font(.caption)
     }
@@ -198,7 +209,7 @@ struct QuotaCard: View {
                 }
             }
         } label: {
-            Text("Accounts")
+            Text("quota.accounts".localized(fallback: "账号列表"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -217,6 +228,19 @@ private struct QuotaSection: View {
     
     private var progressWidth: Double {
         remainingPercent / 100
+    }
+
+    private var semanticTint: Color {
+        switch remainingPercent {
+        case ..<10:
+            return .semanticDanger
+        case ..<30:
+            return .semanticWarning
+        case ..<50:
+            return .semanticAccentSecondary
+        default:
+            return tint
+        }
     }
     
     var body: some View {
@@ -255,13 +279,16 @@ private struct QuotaSection: View {
                     Capsule()
                         .fill(.quaternary)
                     Capsule()
-                        .fill(tint)
+                        .fill(semanticTint)
                         .frame(width: proxy.size.width * min(1, progressWidth))
-                        .animation(.smooth(duration: 0.3), value: progressWidth)
+                        .motionAwareAnimation(.smooth(duration: 0.3), value: progressWidth)
                 }
             }
             .frame(height: 8)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(Int(displayPercent))%")
     }
 }
 
@@ -274,12 +301,13 @@ private struct StatusBadge: View {
     
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
+            Image(systemName: count > 0 ? "circle.fill" : "circle")
+                .font(.caption2)
+                .foregroundStyle(color)
             Text(verbatim: "\(count) \(label)")
                 .foregroundStyle(count > 0 ? .primary : .secondary)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -311,7 +339,7 @@ private struct QuotaAccountRow: View {
                         ForEach(quotaData.models.prefix(2)) { model in
                             Text(verbatim: "\(model.percentage)%")
                                 .font(.caption2)
-                                .foregroundStyle(model.percentage > 50 ? .green : (model.percentage > 20 ? .orange : .red))
+                                .foregroundStyle(model.percentage > 50 ? Color.semanticSuccess : (model.percentage > 20 ? Color.semanticWarning : Color.semanticDanger))
                         }
                     }
                 } else if let statusMessage = account.humanReadableStatus {

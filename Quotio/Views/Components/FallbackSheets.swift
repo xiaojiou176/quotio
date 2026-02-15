@@ -29,7 +29,7 @@ struct VirtualModelSheet: View {
             VStack(spacing: 8) {
                 Image(systemName: isEditing ? "pencil.circle.fill" : "plus.circle.fill")
                     .font(.system(size: 48))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.semanticInfo)
 
                 Text(isEditing ? "fallback.editVirtualModel".localized() : "fallback.createVirtualModel".localized())
                     .font(.title2)
@@ -53,7 +53,7 @@ struct VirtualModelSheet: View {
                 if showValidationError && !isValidName {
                     Text("fallback.nameRequired".localized())
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                 }
 
                 Text("fallback.modelNameHint".localized())
@@ -107,6 +107,7 @@ struct AddFallbackEntrySheet: View {
 
     @State private var selectedModelId: String = ""
     @State private var showValidationError = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: Refresh State
     @State private var isRefreshing = false
@@ -191,7 +192,7 @@ struct AddFallbackEntrySheet: View {
             VStack(spacing: 8) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 48))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
 
                 Text("fallback.addFallbackEntry".localized())
                     .font(.title2)
@@ -214,7 +215,7 @@ struct AddFallbackEntrySheet: View {
                     HStack(spacing: 8) {
                         Text("fallback.noModelsHint".localized())
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
 
                         if onRefresh != nil {
                             refreshButton
@@ -241,6 +242,8 @@ struct AddFallbackEntrySheet: View {
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
+                        .accessibilityLabel("fallback.selectModelPlaceholder".localized())
+                        .help("fallback.selectModelPlaceholder".localized())
 
                         if onRefresh != nil {
                             refreshButton
@@ -251,7 +254,7 @@ struct AddFallbackEntrySheet: View {
                 if showValidationError && !isValidEntry {
                     Text("fallback.entryRequired".localized())
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                 }
 
                 // Show selected model info
@@ -325,7 +328,7 @@ struct AddFallbackEntrySheet: View {
                 // Show feedback icon briefly, then clear
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.3)) {
+                    withMotionAwareAnimation(.easeOut(duration: 0.3), reduceMotion: reduceMotion) {
                         refreshSuccess = nil
                     }
                 }
@@ -334,7 +337,7 @@ struct AddFallbackEntrySheet: View {
             Group {
                 if let success = refreshSuccess {
                     Image(systemName: success ? "checkmark" : "xmark")
-                        .foregroundStyle(success ? .green : .red)
+                        .foregroundStyle(success ? Color.semanticSuccess : Color.semanticDanger)
                 } else if isRefreshing {
                     // TimelineView drives per-frame rotation for smooth continuous spin
                     TimelineView(.animation) { context in
@@ -352,6 +355,8 @@ struct AddFallbackEntrySheet: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .disabled(isRefreshing || refreshSuccess != nil)
+        .accessibilityLabel("action.refresh".localized())
+        .help("action.refresh".localized())
     }
 }
 

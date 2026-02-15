@@ -102,7 +102,7 @@ struct OperatingModeCard: View {
             
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                 .font(.title2)
-                .foregroundStyle(isSelected ? .blue : .secondary.opacity(0.4))
+                .foregroundStyle(isSelected ? Color.semanticInfo : .secondary.opacity(0.4))
         }
         .padding(16)
         .background(backgroundView)
@@ -112,11 +112,15 @@ struct OperatingModeCard: View {
                 .stroke(borderColor, lineWidth: isSelected ? 2 : 1)
         )
         .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .motionAwareAnimation(.easeInOut(duration: 0.15), value: isHovered)
+        .motionAwareAnimation(.easeInOut(duration: 0.15), value: isSelected)
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
         .onHover { isHovered = $0 }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            onSelect()
+        }
     }
     
     private var iconView: some View {
@@ -134,8 +138,8 @@ struct OperatingModeCard: View {
     
     private var badgeColor: Color {
         switch mode {
-        case .monitor: return .green
-        case .remoteProxy: return .purple
+        case .monitor: return .semanticSuccess
+        case .remoteProxy: return .semanticAccentSecondary
         default: return .gray
         }
     }

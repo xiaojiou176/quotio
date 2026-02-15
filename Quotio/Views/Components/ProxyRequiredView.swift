@@ -33,7 +33,7 @@ struct ProxyRequiredView: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [.blue.opacity(0.15), .purple.opacity(0.15)],
+                            colors: [Color.semanticInfo.opacity(0.15), Color.semanticAccentSecondary.opacity(0.15)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -44,7 +44,7 @@ struct ProxyRequiredView: View {
                     .font(.system(size: 40, weight: .medium))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [.blue, .purple],
+                            colors: [Color.semanticInfo, Color.semanticAccentSecondary],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -84,7 +84,7 @@ struct ProxyRequiredView: View {
                 .frame(minWidth: 140)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.blue)
+            .tint(Color.semanticInfo)
             .controlSize(.large)
             .disabled(isStarting)
         }

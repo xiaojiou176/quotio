@@ -58,12 +58,12 @@ struct IDEScanSheet: View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(Color.blue.opacity(0.1))
+                    .fill(Color.semanticSelectionFill)
                     .frame(width: 56, height: 56)
                 
                 Image(systemName: "magnifyingglass.circle.fill")
                     .font(.system(size: 28))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.semanticInfo)
             }
             
             VStack(alignment: .leading, spacing: 4) {
@@ -87,7 +87,7 @@ struct IDEScanSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "lock.shield.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.semanticWarning)
                 
                 Text("ideScan.privacyNotice".localized())
                     .font(.headline)
@@ -100,7 +100,7 @@ struct IDEScanSheet: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.08))
+        .background(Color.semanticWarningFill)
         .cornerRadius(12)
     }
     
@@ -178,9 +178,11 @@ struct IDEScanSheet: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .accessibilityLabel(title)
+                .help(detail)
         }
         .padding(12)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .cornerRadius(8)
     }
     
@@ -190,29 +192,29 @@ struct IDEScanSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
                 
                 Text("ideScan.complete".localized())
                     .font(.headline)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
             }
             
             if let result = IDEScanSettingsManager.shared.lastScanResult {
                 VStack(alignment: .leading, spacing: 8) {
                     if result.cursorFound {
-                        resultRow(icon: "checkmark.circle.fill", color: .green, text: "Cursor: \((result.cursorEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
+                        resultRow(icon: "checkmark.circle.fill", color: .semanticSuccess, text: "Cursor: \((result.cursorEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
                     } else if scanOptions.scanCursor {
                         resultRow(icon: "xmark.circle.fill", color: .secondary, text: "Cursor: " + "ideScan.notFound".localized())
                     }
                     
                     if result.traeFound {
-                        resultRow(icon: "checkmark.circle.fill", color: .green, text: "Trae: \((result.traeEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
+                        resultRow(icon: "checkmark.circle.fill", color: .semanticSuccess, text: "Trae: \((result.traeEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
                     } else if scanOptions.scanTrae {
                         resultRow(icon: "xmark.circle.fill", color: .secondary, text: "Trae: " + "ideScan.notFound".localized())
                     }
                     
                     if !result.cliToolsFound.isEmpty {
-                        resultRow(icon: "checkmark.circle.fill", color: .green, text: "CLI: \(result.cliToolsFound.joined(separator: ", "))")
+                        resultRow(icon: "checkmark.circle.fill", color: .semanticSuccess, text: "CLI: \(result.cliToolsFound.joined(separator: ", "))")
                     } else if scanOptions.scanCLITools {
                         resultRow(icon: "xmark.circle.fill", color: .secondary, text: "CLI: " + "ideScan.notFound".localized())
                     }
@@ -221,7 +223,7 @@ struct IDEScanSheet: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.green.opacity(0.08))
+        .background(Color.semanticSuccess.opacity(0.08))
         .cornerRadius(12)
     }
     
@@ -242,11 +244,11 @@ struct IDEScanSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.semanticDanger)
                 
                 Text("ideScan.error".localized())
                     .font(.headline)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.semanticDanger)
             }
             
             Text(error)
@@ -255,7 +257,7 @@ struct IDEScanSheet: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.red.opacity(0.08))
+        .background(Color.semanticDanger.opacity(0.08))
         .cornerRadius(12)
     }
     

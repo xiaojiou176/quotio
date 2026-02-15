@@ -468,7 +468,7 @@ final class CLIProxyManager {
 
         quota-exceeded:
           switch-project: true
-          switch-preview-model: true
+          switch-preview-model: false
 
         request-retry: 3
         max-retry-interval: 30
@@ -1009,7 +1009,10 @@ final class CLIProxyManager {
             break
         }
         
-        let isHealthy = await compatibilityChecker.isHealthy(port: useBridgeMode ? internalPort : proxyStatus.port)
+        let isHealthy = await compatibilityChecker.isHealthy(
+            port: useBridgeMode ? internalPort : proxyStatus.port,
+            managementKey: managementKey
+        )
         
         // Re-check state after await - proxy may have been stopped or upgrade may have started
         guard proxyStatus.running else {
@@ -1565,7 +1568,10 @@ extension CLIProxyManager {
             throw ProxyUpgradeError.dryRunFailed("Test port not available")
         }
         
-        let compatResult = await compatibilityChecker.fullCheck(port: testPort)
+        let compatResult = await compatibilityChecker.fullCheck(
+            port: testPort,
+            managementKey: managementKey
+        )
         
         if !compatResult.isCompatible {
             // Compatibility failed, rollback
@@ -1705,7 +1711,10 @@ extension CLIProxyManager {
         }
         
         // Verify health
-        let isHealthy = await compatibilityChecker.isHealthy(port: port)
+        let isHealthy = await compatibilityChecker.isHealthy(
+            port: port,
+            managementKey: managementKey
+        )
         guard isHealthy else {
             throw ProxyUpgradeError.dryRunFailed("Test proxy health check failed")
         }

@@ -52,12 +52,12 @@ struct CompletionStep: View {
     private var successIcon: some View {
         ZStack {
             Circle()
-                .fill(Color.green.opacity(0.15))
+                .fill(Color.semanticSuccess.opacity(0.15))
                 .frame(width: 80, height: 80)
             
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.semanticSuccess)
         }
     }
     

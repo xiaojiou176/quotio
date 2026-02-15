@@ -18,7 +18,7 @@ struct ExperimentalBadge: View {
             .padding(.vertical, 2)
             .background(
                 Capsule()
-                    .fill(.orange.gradient)
+                    .fill(Color.semanticWarning.gradient)
             )
     }
 }

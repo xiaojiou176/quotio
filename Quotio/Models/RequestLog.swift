@@ -58,6 +58,7 @@ nonisolated struct FallbackAttempt: Codable, Hashable, Sendable {
 nonisolated struct RequestLog: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let timestamp: Date
+    let requestId: String?
 
     /// HTTP method (GET, POST, etc.)
     let method: String
@@ -70,6 +71,18 @@ nonisolated struct RequestLog: Identifiable, Codable, Hashable, Sendable {
 
     /// Model used (e.g., "claude-sonnet-4", "gemini-2.0-flash")
     let model: String?
+
+    /// Request source classification (e.g., Codex CLI / Claude Code)
+    let source: String?
+
+    /// Raw source signal (typically User-Agent/header value)
+    let sourceRaw: String?
+
+    /// Account hint if provided by request header or server evidence
+    let accountHint: String?
+
+    /// Redacted payload snippet for debug evidence
+    let requestPayloadSnippet: String?
 
     /// Resolved model after fallback (e.g., "kiro-claude-opus-4-5-agentic")
     let resolvedModel: String?
@@ -127,10 +140,15 @@ nonisolated struct RequestLog: Identifiable, Codable, Hashable, Sendable {
     init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
+        requestId: String? = nil,
         method: String,
         endpoint: String,
         provider: String? = nil,
         model: String? = nil,
+        source: String? = nil,
+        sourceRaw: String? = nil,
+        accountHint: String? = nil,
+        requestPayloadSnippet: String? = nil,
         resolvedModel: String? = nil,
         resolvedProvider: String? = nil,
         inputTokens: Int? = nil,
@@ -145,10 +163,15 @@ nonisolated struct RequestLog: Identifiable, Codable, Hashable, Sendable {
     ) {
         self.id = id
         self.timestamp = timestamp
+        self.requestId = requestId
         self.method = method
         self.endpoint = endpoint
         self.provider = provider
         self.model = model
+        self.source = source
+        self.sourceRaw = sourceRaw
+        self.accountHint = accountHint
+        self.requestPayloadSnippet = requestPayloadSnippet
         self.resolvedModel = resolvedModel
         self.resolvedProvider = resolvedProvider
         self.inputTokens = inputTokens
@@ -254,11 +277,11 @@ nonisolated struct RequestHistoryStore: Codable, Sendable {
     /// Request log entries
     var entries: [RequestLog]
     
-    /// Maximum entries to keep (memory-optimized)
-    static let maxEntries = 50
+    /// Maximum entries to keep on disk (long window)
+    static let maxEntries = 5000
     
     /// Current storage version
-    static let currentVersion = 1
+    static let currentVersion = 2
     
     /// Create empty store
     static var empty: RequestHistoryStore {
@@ -371,9 +394,9 @@ nonisolated struct RequestHistoryStore: Codable, Sendable {
 
 extension RequestLog {
     /// Static formatters for performance (avoid recreating on every call)
-    private static let timeFormatter: DateFormatter = {
+    private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
+        formatter.dateFormat = "MM-dd HH:mm:ss"
         return formatter
     }()
 
@@ -386,7 +409,7 @@ extension RequestLog {
 
     /// Formatted timestamp for display
     var formattedTimestamp: String {
-        Self.timeFormatter.string(from: timestamp)
+        Self.timestampFormatter.string(from: timestamp)
     }
 
     /// Formatted date for grouping
@@ -417,6 +440,15 @@ extension RequestLog {
     var statusBadge: String {
         guard let code = statusCode else { return "?" }
         return "\(code)"
+    }
+
+    var shortRequestId: String? {
+        guard let requestId else { return nil }
+        return String(requestId.prefix(8))
+    }
+
+    var sourceDisplayName: String {
+        source ?? "Unknown Client"
     }
 }
 

@@ -121,7 +121,7 @@ struct OnboardingFlow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(viewModel.currentStep)
                 .transition(slideTransition)
-                .animation(.easeInOut(duration: 0.3), value: viewModel.currentStep)
+                .motionAwareAnimation(.easeInOut(duration: 0.3), value: viewModel.currentStep)
             
             progressIndicator
                 .padding(.bottom, 24)
@@ -170,7 +170,7 @@ struct OnboardingFlow: View {
                 Circle()
                     .fill(index <= viewModel.currentStepIndex ? Color.accentColor : Color.secondary.opacity(0.3))
                     .frame(width: 8, height: 8)
-                    .animation(.easeInOut(duration: 0.2), value: viewModel.currentStepIndex)
+                    .motionAwareAnimation(.easeInOut(duration: 0.2), value: viewModel.currentStepIndex)
             }
         }
     }

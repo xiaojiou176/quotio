@@ -8,13 +8,22 @@ import SwiftUI
 struct TunnelStatusBadge: View {
     let status: CloudflareTunnelStatus
     let compact: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     init(status: CloudflareTunnelStatus, compact: Bool = false) {
         self.status = status
         self.compact = compact
     }
     
-    @State private var isAnimating = false
+    @State private var rotationAngle: Double = 0
+
+    private func restartTransitionSpinner() {
+        rotationAngle = 0
+        guard !reduceMotion else { return }
+        withMotionAwareAnimation(.linear(duration: 1).repeatForever(autoreverses: false), reduceMotion: reduceMotion) {
+            rotationAngle = 360
+        }
+    }
     
     var body: some View {
         HStack(spacing: 6) {
@@ -27,12 +36,16 @@ struct TunnelStatusBadge: View {
                     Circle()
                         .trim(from: 0, to: 0.7)
                         .stroke(status.color, lineWidth: 2)
-                        .rotationEffect(Angle(degrees: isAnimating ? 360 : 0))
+                        .rotationEffect(Angle(degrees: rotationAngle))
                         .frame(width: 8, height: 8)
                         .onAppear {
-                            withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
-                                isAnimating = true
-                            }
+                            restartTransitionSpinner()
+                        }
+                        .onDisappear {
+                            rotationAngle = 0
+                        }
+                        .onChange(of: reduceMotion) { _, _ in
+                            restartTransitionSpinner()
                         }
                 } else {
                     Circle()

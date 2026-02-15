@@ -543,6 +543,9 @@ final class MenuBarSettingsManager {
             defaults.set(clampedMax, forKey: menuBarMaxItemsKey)
         }
 
+        if defaults.object(forKey: hideSensitiveInfoKey) == nil {
+            defaults.set(true, forKey: hideSensitiveInfoKey)
+        }
         self.hideSensitiveInfo = defaults.bool(forKey: hideSensitiveInfoKey)
         self.totalUsageMode = TotalUsageMode(rawValue: defaults.string(forKey: totalUsageModeKey) ?? "") ?? .sessionOnly
         self.modelAggregationMode = ModelAggregationMode(rawValue: defaults.string(forKey: modelAggregationModeKey) ?? "") ?? .lowest

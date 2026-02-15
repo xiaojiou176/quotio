@@ -137,10 +137,15 @@ final class ProxyBridge {
     /// Metadata extracted from proxied requests
     struct RequestMetadata: Sendable {
         let timestamp: Date
+        let requestId: String
         let method: String
         let path: String
         let provider: String?
         let model: String?
+        let source: String?
+        let sourceRaw: String?
+        let accountHint: String?
+        let requestPayloadSnippet: String?
         let resolvedModel: String?  // Actual model used after fallback resolution
         let resolvedProvider: String?  // Actual provider used after fallback resolution
         let statusCode: Int?
@@ -429,7 +434,14 @@ final class ProxyBridge {
             body = String(requestString[bodyRange.upperBound...])
         }
 
-        let metadata = extractMetadata(method: method, path: path, body: body)
+        let requestId = UUID().uuidString
+        let metadata = extractMetadata(
+            method: method,
+            path: path,
+            headers: headers,
+            body: body,
+            requestId: requestId
+        )
 
         // Check for virtual model and create fallback context
         Task { @MainActor [weak self] in
@@ -459,6 +471,7 @@ final class ProxyBridge {
                 startTime: startTime,
                 requestSize: data.count,
                 metadata: metadata,
+                requestId: requestId,
                 targetPort: targetPortValue,
                 targetHost: targetHostValue,
                 fallbackContext: fallbackContext
@@ -609,7 +622,23 @@ final class ProxyBridge {
     
     // MARK: - Metadata Extraction
     
-    private nonisolated func extractMetadata(method: String, path: String, body: String) -> (provider: String?, model: String?, method: String, path: String) {
+    private nonisolated func extractMetadata(
+        method: String,
+        path: String,
+        headers: [(String, String)],
+        body: String,
+        requestId: String
+    ) -> (
+        requestId: String,
+        provider: String?,
+        model: String?,
+        source: String?,
+        sourceRaw: String?,
+        accountHint: String?,
+        requestPayloadSnippet: String?,
+        method: String,
+        path: String
+    ) {
         // Detect provider from path
         var provider: String?
         if path.contains("/anthropic/") || path.contains("/claude") {
@@ -644,8 +673,148 @@ final class ProxyBridge {
                 }
             }
         }
-        
-        return (provider, model, method, path)
+
+        let sourceResult = classifyRequestSource(headers: headers, path: path, body: body)
+        let accountHint = extractAccountHint(headers: headers)
+        let payloadSnippet = isPayloadEvidenceCaptureEnabled() ? redactAndTrimPayload(body) : nil
+
+        return (
+            requestId: requestId,
+            provider: provider,
+            model: model,
+            source: sourceResult.source,
+            sourceRaw: sourceResult.raw,
+            accountHint: accountHint,
+            requestPayloadSnippet: payloadSnippet,
+            method: method,
+            path: path
+        )
+    }
+
+    private nonisolated func classifyRequestSource(
+        headers: [(String, String)],
+        path: String,
+        body: String
+    ) -> (source: String?, raw: String?) {
+        let sourceHeaderKeys = ["x-client-name", "x-source", "x-request-source", "x-cli-source", "x-agent-name"]
+        var sourceHeader: String?
+        for key in sourceHeaderKeys {
+            if let value = headerValue(named: key, in: headers), !value.isEmpty {
+                sourceHeader = value
+                break
+            }
+        }
+
+        let userAgent = headerValue(named: "user-agent", in: headers)
+        let raw = sourceHeader ?? userAgent
+        let normalizedRaw = (raw ?? "").lowercased()
+
+        if normalizedRaw.contains("codex") {
+            return ("Codex CLI", raw)
+        }
+        if normalizedRaw.contains("claude code") || normalizedRaw.contains("claude-code") {
+            return ("Claude Code", raw)
+        }
+        if normalizedRaw.contains("cursor") {
+            return ("Cursor", raw)
+        }
+        if normalizedRaw.contains("windsurf") {
+            return ("Windsurf", raw)
+        }
+        if normalizedRaw.contains("gemini") {
+            return ("Gemini CLI", raw)
+        }
+
+        if path.contains("/v1/messages") {
+            return ("Anthropic-compatible", raw)
+        }
+        if path.contains("/chat/completions") {
+            return ("OpenAI-compatible", raw)
+        }
+        if body.contains("\"anthropic_version\"") {
+            return ("Anthropic-compatible", raw)
+        }
+
+        return (raw == nil ? "Unknown Client" : "Custom Client", raw)
+    }
+
+    private nonisolated func extractAccountHint(headers: [(String, String)]) -> String? {
+        let candidates = [
+            "x-auth-index",
+            "x-account-id",
+            "x-account",
+            "x-auth-file",
+            "anthropic-account-id",
+            "x-quotio-account"
+        ]
+        for key in candidates {
+            if let value = headerValue(named: key, in: headers), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private nonisolated func headerValue(named key: String, in headers: [(String, String)]) -> String? {
+        headers.first { $0.0.caseInsensitiveCompare(key) == .orderedSame }?.1
+    }
+
+    private nonisolated func redactAndTrimPayload(_ body: String, limit: Int = 4096) -> String? {
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        if let bodyData = body.data(using: .utf8),
+           let jsonObject = try? JSONSerialization.jsonObject(with: bodyData),
+           let redacted = redactSensitiveValues(in: jsonObject),
+           let redactedData = try? JSONSerialization.data(withJSONObject: redacted, options: [.prettyPrinted, .sortedKeys]),
+           var payload = String(data: redactedData, encoding: .utf8) {
+            if payload.count > limit {
+                payload = String(payload.prefix(limit)) + "\n...<truncated>"
+            }
+            return payload
+        }
+
+        var payload = body
+        if payload.count > limit {
+            payload = String(payload.prefix(limit)) + "\n...<truncated>"
+        }
+        return payload
+    }
+
+    private nonisolated func isPayloadEvidenceCaptureEnabled() -> Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "ui.captureRequestPayloadEvidence") == nil {
+            return true
+        }
+        return defaults.bool(forKey: "ui.captureRequestPayloadEvidence")
+    }
+
+    private nonisolated func redactSensitiveValues(in object: Any) -> Any? {
+        let sensitiveKeys = [
+            "api_key", "apikey", "token", "authorization", "password", "secret",
+            "access_token", "refresh_token", "cookie", "session", "key"
+        ]
+
+        if let dict = object as? [String: Any] {
+            var result: [String: Any] = [:]
+            for (key, value) in dict {
+                let normalized = key.lowercased()
+                let shouldRedact = sensitiveKeys.contains { normalized.contains($0) }
+                if shouldRedact {
+                    result[key] = "<redacted>"
+                } else if let nested = redactSensitiveValues(in: value) {
+                    result[key] = nested
+                } else {
+                    result[key] = value
+                }
+            }
+            return result
+        }
+
+        if let array = object as? [Any] {
+            return array.compactMap { redactSensitiveValues(in: $0) }
+        }
+
+        return object
     }
     
     // MARK: - Request Forwarding
@@ -660,7 +829,18 @@ final class ProxyBridge {
         connectionId: Int,
         startTime: Date,
         requestSize: Int,
-        metadata: (provider: String?, model: String?, method: String, path: String),
+        metadata: (
+            requestId: String,
+            provider: String?,
+            model: String?,
+            source: String?,
+            sourceRaw: String?,
+            accountHint: String?,
+            requestPayloadSnippet: String?,
+            method: String,
+            path: String
+        ),
+        requestId: String,
         targetPort: UInt16,
         targetHost: String,
         fallbackContext: FallbackContext
@@ -723,6 +903,7 @@ final class ProxyBridge {
                 // Add our headers
                 forwardedRequest += "Host: \(targetHost):\(targetPort)\r\n"
                 forwardedRequest += "Connection: close\r\n"  // KEY: Force fresh connections
+                forwardedRequest += "X-Quotio-Request-Id: \(requestId)\r\n"
                 forwardedRequest += "Content-Length: \(body.utf8.count)\r\n"
                 forwardedRequest += "\r\n"
                 forwardedRequest += body
@@ -746,6 +927,7 @@ final class ProxyBridge {
                             startTime: startTime,
                             requestSize: requestSize,
                             metadata: metadata,
+                            requestId: requestId,
                             responseData: Data(),
                             fallbackContext: capturedFallbackContext,
                             headers: capturedHeaders,
@@ -779,7 +961,18 @@ final class ProxyBridge {
         connectionId: Int,
         startTime: Date,
         requestSize: Int,
-        metadata: (provider: String?, model: String?, method: String, path: String),
+        metadata: (
+            requestId: String,
+            provider: String?,
+            model: String?,
+            source: String?,
+            sourceRaw: String?,
+            accountHint: String?,
+            requestPayloadSnippet: String?,
+            method: String,
+            path: String
+        ),
+        requestId: String,
         responseData: Data,
         fallbackContext: FallbackContext,
         headers: [(String, String)],
@@ -836,6 +1029,7 @@ final class ProxyBridge {
                                 startTime: startTime,
                                 requestSize: requestSize,
                                 metadata: metadata,
+                                requestId: requestId,
                                 targetPort: targetPort,
                                 targetHost: targetHost,
                                 fallbackContext: retryContext
@@ -885,6 +1079,7 @@ final class ProxyBridge {
                             startTime: startTime,
                             requestSize: requestSize,
                             metadata: metadata,
+                            requestId: requestId,
                             targetPort: targetPort,
                             targetHost: targetHost,
                             fallbackContext: nextContext
@@ -906,6 +1101,7 @@ final class ProxyBridge {
                             responseSize: accumulatedResponse.count,
                             responseData: accumulatedResponse,
                             metadata: metadata,
+                            requestId: requestId,
                             fallbackContext: fallbackContext
                         )
 
@@ -923,6 +1119,7 @@ final class ProxyBridge {
                                 startTime: startTime,
                                 requestSize: requestSize,
                                 metadata: metadata,
+                                requestId: requestId,
                                 responseData: accumulatedResponse,
                                 fallbackContext: fallbackContext,
                                 headers: headers,
@@ -944,6 +1141,7 @@ final class ProxyBridge {
                     responseSize: accumulatedResponse.count,
                     responseData: accumulatedResponse,
                     metadata: metadata,
+                    requestId: requestId,
                     fallbackContext: fallbackContext
                 )
 
@@ -963,7 +1161,18 @@ final class ProxyBridge {
         requestSize: Int,
         responseSize: Int,
         responseData: Data,
-        metadata: (provider: String?, model: String?, method: String, path: String),
+        metadata: (
+            requestId: String,
+            provider: String?,
+            model: String?,
+            source: String?,
+            sourceRaw: String?,
+            accountHint: String?,
+            requestPayloadSnippet: String?,
+            method: String,
+            path: String
+        ),
+        requestId: String,
         fallbackContext: FallbackContext
     ) {
         let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
@@ -1031,10 +1240,15 @@ final class ProxyBridge {
 
             let requestMetadata = RequestMetadata(
                 timestamp: startTime,
+                requestId: requestId,
                 method: capturedMetadata.method,
                 path: capturedMetadata.path,
                 provider: capturedMetadata.provider,
                 model: capturedMetadata.model,
+                source: capturedMetadata.source,
+                sourceRaw: capturedMetadata.sourceRaw,
+                accountHint: capturedMetadata.accountHint,
+                requestPayloadSnippet: capturedMetadata.requestPayloadSnippet,
                 resolvedModel: resolvedModel,
                 resolvedProvider: resolvedProvider,
                 statusCode: capturedStatusCode,

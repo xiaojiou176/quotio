@@ -14,6 +14,19 @@ struct QuotaProgressBar: View {
     private var clamped: Double {
         min(100, max(0, percent))
     }
+
+    private var semanticTint: Color {
+        switch clamped {
+        case ..<10:
+            return .semanticDanger
+        case ..<30:
+            return .semanticWarning
+        case ..<50:
+            return .semanticAccentSecondary
+        default:
+            return tint
+        }
+    }
     
     var body: some View {
         GeometryReader { proxy in
@@ -22,23 +35,23 @@ struct QuotaProgressBar: View {
                 Capsule()
                     .fill(.quaternary)
                 Capsule()
-                    .fill(tint)
+                    .fill(semanticTint)
                     .frame(width: fillWidth)
-                    .animation(.smooth(duration: 0.3), value: clamped)
+                    .motionAwareAnimation(.smooth(duration: 0.3), value: clamped)
             }
         }
         .frame(height: height)
-        .accessibilityLabel("Usage")
-        .accessibilityValue("\(Int(clamped)) percent")
+        .accessibilityLabel("quota.progress".localized(fallback: "配额进度"))
+        .accessibilityValue("\(Int(clamped))%")
     }
 }
 
 #Preview {
     VStack(spacing: 16) {
-        QuotaProgressBar(percent: 75, tint: .green)
-        QuotaProgressBar(percent: 50, tint: .orange)
-        QuotaProgressBar(percent: 25, tint: .red)
-        QuotaProgressBar(percent: 100, tint: .blue)
+        QuotaProgressBar(percent: 75, tint: .semanticSuccess)
+        QuotaProgressBar(percent: 50, tint: .semanticWarning)
+        QuotaProgressBar(percent: 25, tint: .semanticDanger)
+        QuotaProgressBar(percent: 100, tint: .semanticInfo)
     }
     .padding()
     .frame(width: 300)

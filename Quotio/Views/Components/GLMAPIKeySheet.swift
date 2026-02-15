@@ -88,6 +88,8 @@ struct GLMAPIKeySheet: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("action.close".localized())
+            .help("action.close".localized())
         }
         .padding(20)
     }
@@ -110,7 +112,7 @@ struct GLMAPIKeySheet: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
 
@@ -133,11 +135,13 @@ struct GLMAPIKeySheet: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+                .accessibilityLabel("glm.endpoint".localized())
+                .help("glm.endpoint".localized())
                 .disabled(true) // Only bigmodel.cn is supported
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
 

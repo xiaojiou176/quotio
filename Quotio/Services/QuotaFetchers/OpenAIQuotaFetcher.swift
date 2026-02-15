@@ -223,14 +223,42 @@ actor OpenAIQuotaFetcher {
             let filePath = (expandedPath as NSString).appendingPathComponent(file)
             
             do {
-                let result = try await fetchQuotaForAuthFile(at: filePath)
-                results[result.accountKey] = result.quota.toProviderQuotaData()
+                let quota = try await fetchQuotaForAuthFile(at: filePath)
+                let providerQuota = quota.toProviderQuotaData()
+                let lookupKeys = codexQuotaLookupKeys(fileName: file, filePath: filePath)
+                for key in lookupKeys where !key.isEmpty {
+                    results[key] = providerQuota
+                }
             } catch {
                 Log.quota("Failed to fetch Codex quota for \(file): \(error)")
             }
         }
         
         return results
+    }
+
+    private func codexQuotaLookupKeys(fileName: String, filePath: String) -> [String] {
+        var keys: [String] = []
+
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)),
+           let authFile = try? JSONDecoder().decode(CodexAuthFile.self, from: data),
+           let email = authFile.email?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !email.isEmpty {
+            keys.append(email)
+            keys.append(email + "-team")
+        }
+
+        let stripped = fileName
+            .replacingOccurrences(of: "codex-", with: "")
+            .replacingOccurrences(of: ".json", with: "")
+        if !stripped.isEmpty {
+            keys.append(stripped)
+            if stripped.hasSuffix("-team") {
+                keys.append(String(stripped.dropLast("-team".count)))
+            }
+        }
+
+        return Array(Set(keys))
     }
 }
 

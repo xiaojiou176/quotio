@@ -39,6 +39,9 @@ final class RequestTracker {
     
     /// Queue for file operations
     private let fileQueue = DispatchQueue(label: "dev.quotio.desktop.request-tracker-file")
+
+    /// In-memory hot window for UI rendering
+    private let memoryWindowSize = 200
     
     /// Storage file URL
     private var storageURL: URL {
@@ -71,11 +74,8 @@ final class RequestTracker {
     
     private func trimHistoryForBackground() {
         let reducedLimit = 10
-        if store.entries.count > reducedLimit {
-            store.entries = Array(store.entries.prefix(reducedLimit))
-            requestHistory = store.entries
-            stats = store.calculateStats()
-            saveToDisk()
+        if requestHistory.count > reducedLimit {
+            requestHistory = Array(requestHistory.prefix(reducedLimit))
             NSLog("[RequestTracker] Trimmed to \(reducedLimit) entries for background")
         }
     }
@@ -99,10 +99,15 @@ final class RequestTracker {
         let attempts = metadata.fallbackAttempts.isEmpty ? nil : metadata.fallbackAttempts
         let entry = RequestLog(
             timestamp: metadata.timestamp,
+            requestId: metadata.requestId,
             method: metadata.method,
             endpoint: metadata.path,
             provider: metadata.provider,
             model: metadata.model,
+            source: metadata.source,
+            sourceRaw: metadata.sourceRaw,
+            accountHint: metadata.accountHint,
+            requestPayloadSnippet: metadata.requestPayloadSnippet,
             resolvedModel: metadata.resolvedModel,
             resolvedProvider: metadata.resolvedProvider,
             inputTokens: nil,
@@ -122,7 +127,7 @@ final class RequestTracker {
     /// Add a request entry directly
     func addEntry(_ entry: RequestLog) {
         store.addEntry(entry)
-        requestHistory = store.entries
+        requestHistory = Array(store.entries.prefix(memoryWindowSize))
         stats = store.calculateStats()
         saveToDisk()
     }
@@ -159,7 +164,7 @@ final class RequestTracker {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601  // Match the encoding strategy
             store = try decoder.decode(RequestHistoryStore.self, from: data)
-            requestHistory = store.entries
+            requestHistory = Array(store.entries.prefix(memoryWindowSize))
             stats = store.calculateStats()
             NSLog("[RequestTracker] Loaded \(store.entries.count) entries from disk")
         } catch {
@@ -188,5 +193,76 @@ final class RequestTracker {
                 NSLog("[RequestTracker] Failed to save history: \(error)")
             }
         }
+    }
+
+    // MARK: - Audit Package
+
+    nonisolated struct RequestAuditPackage: Codable, Sendable {
+        nonisolated struct AuthEvidence: Codable, Sendable {
+            let id: String
+            let provider: String
+            let account: String?
+            let authIndex: String?
+            let status: String
+            let disabled: Bool
+            let unavailable: Bool
+            let errorKind: String?
+            let errorReason: String?
+            let frozenUntil: String?
+            let disabledByPolicy: Bool?
+        }
+
+        let exportedAt: Date
+        let requestCountInMemory: Int
+        let requestCountOnDisk: Int
+        let stats: RequestStats
+        let recentErrors: [RequestLog]
+        let recentRequests: [RequestLog]
+        let settingsSnapshot: [String: String]
+        let authEvidence: [AuthEvidence]
+    }
+
+    func exportAuditPackageData(authFiles: [AuthFile] = []) throws -> Data {
+        let settingsSnapshot: [String: String] = [
+            "operatingMode": UserDefaults.standard.string(forKey: "operatingMode") ?? "unknown",
+            "loggingToFile": String(UserDefaults.standard.bool(forKey: "loggingToFile")),
+            "requestLog": String(UserDefaults.standard.bool(forKey: "requestLog")),
+            "refreshCadence": UserDefaults.standard.string(forKey: "refreshCadence") ?? "unknown",
+            "quotaDisplayMode": UserDefaults.standard.string(forKey: "quotaDisplayMode") ?? "unknown",
+            "feature.enhancedUILayout": String(UserDefaults.standard.bool(forKey: "feature.enhancedUILayout")),
+            "feature.enhancedObservability": String(UserDefaults.standard.bool(forKey: "feature.enhancedObservability")),
+            "feature.accessibilityHardening": String(UserDefaults.standard.bool(forKey: "feature.accessibilityHardening"))
+        ]
+
+        let authEvidence = authFiles.map { file in
+            RequestAuditPackage.AuthEvidence(
+                id: file.id,
+                provider: file.provider,
+                account: file.account ?? file.email,
+                authIndex: file.authIndex,
+                status: file.status,
+                disabled: file.disabled,
+                unavailable: file.unavailable,
+                errorKind: file.normalizedErrorKind,
+                errorReason: file.errorReason ?? file.humanReadableStatus,
+                frozenUntil: file.frozenUntil,
+                disabledByPolicy: file.disabledByPolicy
+            )
+        }
+
+        let package = RequestAuditPackage(
+            exportedAt: Date(),
+            requestCountInMemory: requestHistory.count,
+            requestCountOnDisk: store.entries.count,
+            stats: stats,
+            recentErrors: Array(store.entries.filter { !$0.isSuccess }.prefix(200)),
+            recentRequests: Array(requestHistory.prefix(300)),
+            settingsSnapshot: settingsSnapshot,
+            authEvidence: authEvidence
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(package)
     }
 }

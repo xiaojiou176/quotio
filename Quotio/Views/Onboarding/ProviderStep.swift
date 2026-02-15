@@ -56,14 +56,14 @@ struct ProviderStep: View {
     private var hintSection: some View {
         HStack(spacing: 8) {
             Image(systemName: "info.circle")
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.semanticInfo)
             
             Text("onboarding.providers.hint".localized())
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(12)
-        .background(Color.blue.opacity(0.08))
+        .background(Color.semanticSelectionFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     

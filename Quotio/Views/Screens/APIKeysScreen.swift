@@ -54,7 +54,44 @@ struct APIKeysScreen: View {
     }
     
     private var apiKeysListView: some View {
+        Group {
+            if viewModel.isLoading && viewModel.apiKeys.isEmpty {
+                ContentUnavailableView {
+                    ProgressView()
+                } description: {
+                    Text("action.loading".localized(fallback: "加载中..."))
+                }
+            } else if let errorMessage = viewModel.errorMessage, viewModel.apiKeys.isEmpty {
+                ContentUnavailableView {
+                    Label("status.error".localized(fallback: "加载失败"), systemImage: "exclamationmark.triangle.fill")
+                } description: {
+                    Text(errorMessage)
+                } actions: {
+                    Button("action.retry".localized(fallback: "重试")) {
+                        Task { await viewModel.fetchAPIKeys() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            } else {
+                apiKeysListContent
+            }
+        }
+    }
+
+    private var apiKeysListContent: some View {
         List {
+            if let errorMessage = viewModel.errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.semanticWarning)
+                }
+            } else if !viewModel.apiKeys.isEmpty {
+                Section {
+                    Label("status.connected".localized(fallback: "操作成功"), systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(Color.semanticSuccess)
+                }
+            }
+
             Section {
                 ForEach(Array(viewModel.apiKeys.enumerated()), id: \.offset) { index, key in
                     APIKeyRow(
@@ -112,7 +149,7 @@ struct APIKeysScreen: View {
             }
         }
         .overlay {
-            if viewModel.apiKeys.isEmpty && !showingAddKey {
+            if viewModel.apiKeys.isEmpty && !showingAddKey && !viewModel.isLoading && viewModel.errorMessage == nil {
                 ContentUnavailableView {
                     Label("apiKeys.empty".localized(), systemImage: "key.slash")
                 } description: {
@@ -174,15 +211,17 @@ struct APIKeyRow: View {
                 
                 Button(action: onSave) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.semanticSuccess)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("action.save".localized(fallback: "保存"))
                 
                 Button(action: onCancel) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("action.cancel".localized())
             } else {
                 Text(maskedKey)
                     .font(.system(.body, design: .monospaced))
@@ -197,19 +236,22 @@ struct APIKeyRow: View {
                 }
                 .buttonStyle(.borderless)
                 .help("action.copy".localized())
+                .accessibilityLabel("action.copy".localized())
                 
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
                 }
                 .buttonStyle(.borderless)
                 .help("apiKeys.edit".localized())
+                .accessibilityLabel("apiKeys.edit".localized())
                 
                 Button(action: onDelete) {
                     Image(systemName: "trash")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                 }
                 .buttonStyle(.borderless)
                 .help("action.delete".localized())
+                .accessibilityLabel("action.delete".localized())
             }
         }
         .padding(.vertical, 4)
@@ -241,12 +283,14 @@ struct AddAPIKeyRow: View {
             }
             .buttonStyle(.borderless)
             .help("apiKeys.generate".localized())
+            .accessibilityLabel("apiKeys.generate".localized())
             
             Button(action: onSave) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("action.save".localized(fallback: "保存"))
             .disabled(newKey.trimmingCharacters(in: .whitespaces).isEmpty)
             
             Button(action: onCancel) {
@@ -254,6 +298,7 @@ struct AddAPIKeyRow: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("action.cancel".localized())
         }
         .padding(.vertical, 4)
     }

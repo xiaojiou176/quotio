@@ -34,7 +34,21 @@ struct AgentSetupScreen: View {
     
     var body: some View {
         Group {
-            agentListView
+            if !quotaViewModel.proxyManager.proxyStatus.running {
+                ProxyRequiredView(
+                    description: "agents.proxyRequired".localized(fallback: "请先启动代理以加载 Agent 状态")
+                ) {
+                    await quotaViewModel.startProxy()
+                }
+            } else if viewModel.isLoading && sortedAgents.isEmpty {
+                loadingStateView
+            } else if let errorMessage = viewModel.errorMessage, sortedAgents.isEmpty {
+                errorStateView(errorMessage)
+            } else if sortedAgents.isEmpty {
+                emptyStateView
+            } else {
+                agentListView
+            }
         }
         .navigationTitle("agents.title".localized())
         .toolbar {
@@ -48,6 +62,8 @@ struct AgentSetupScreen: View {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
+                .accessibilityLabel("action.refresh".localized())
+                .help("action.refresh".localized())
                 .disabled(viewModel.isLoading)
             }
         }
@@ -63,6 +79,40 @@ struct AgentSetupScreen: View {
                 .onDisappear {
                     viewModel.dismissConfiguration()
                 }
+        }
+    }
+
+    private var loadingStateView: some View {
+        ContentUnavailableView {
+            ProgressView()
+        } description: {
+            Text("action.loading".localized(fallback: "加载中..."))
+        }
+    }
+
+    private func errorStateView(_ message: String) -> some View {
+        ContentUnavailableView {
+            Label("status.error".localized(fallback: "加载失败"), systemImage: "exclamationmark.triangle.fill")
+        } description: {
+            Text(message)
+        } actions: {
+            Button("action.retry".localized(fallback: "重试")) {
+                Task { await viewModel.refreshAgentStatuses(forceRefresh: true) }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var emptyStateView: some View {
+        ContentUnavailableView {
+            Label("agents.empty".localized(fallback: "暂无可用 Agent"), systemImage: "tray")
+        } description: {
+            Text("agents.emptyDescription".localized(fallback: "当前未检测到 Agent，请先安装或刷新状态。"))
+        } actions: {
+            Button("action.refresh".localized()) {
+                Task { await viewModel.refreshAgentStatuses(forceRefresh: true) }
+            }
+            .buttonStyle(.borderedProminent)
         }
     }
     
@@ -94,14 +144,14 @@ struct AgentSetupScreen: View {
                     icon: "checkmark.circle.fill",
                     value: "\(installedAgents.count)",
                     label: "agents.installed".localized(),
-                    color: .green
+                    color: Color.semanticSuccess
                 )
                 
                 StatChip(
                     icon: "gearshape.fill",
                     value: "\(installedAgents.filter { $0.configured }.count)",
                     label: "agents.configured".localized(),
-                    color: .blue
+                    color: Color.semanticInfo
                 )
             }
         }
@@ -185,6 +235,8 @@ private struct NotInstalledAgentCard: View {
                     Image(systemName: "arrow.up.right.square")
                         .font(.caption)
                 }
+                .accessibilityLabel("agents.viewDocs".localized())
+                .help("agents.viewDocs".localized())
             }
         }
         .padding(10)

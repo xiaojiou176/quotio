@@ -96,7 +96,7 @@ struct AddProviderPopover: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                         .padding(.top, 1)
 
                     Text("providers.gemini.tip.multiCredential".localized())
@@ -107,7 +107,7 @@ struct AddProviderPopover: View {
                 .padding(10)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.orange.opacity(0.08))
+                        .fill(Color.semanticWarningFill)
                 )
             }
 
@@ -149,7 +149,7 @@ struct AddProviderPopover: View {
             } label: {
                 HStack {
                     Image(systemName: "sparkle.magnifyingglass")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.semanticInfo)
                     Text("ideScan.scanExisting".localized())
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -167,7 +167,7 @@ struct AddProviderPopover: View {
             } label: {
                 HStack {
                     Image(systemName: "puzzlepiece.extension")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(Color.semanticAccentSecondary)
                     Text("customProviders.add".localized())
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -208,7 +208,7 @@ struct AddProviderPopover: View {
                     systemImage: hasAttemptedSubmit ? "exclamationmark.triangle.fill" : "info.circle"
                 )
                 .font(.caption2)
-                .foregroundStyle(hasAttemptedSubmit ? .red : .secondary)
+                .foregroundStyle(hasAttemptedSubmit ? Color.semanticDanger : .secondary)
             }
         }
         .padding(16)
@@ -242,7 +242,7 @@ struct AddProviderPopover: View {
                         systemImage: "person.crop.circle.badge.exclamationmark"
                     )
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.semanticWarning)
 
                     Text(
                         AddProviderPopoverL10n.text(
@@ -275,7 +275,7 @@ struct AddProviderPopover: View {
                         systemImage: "checkmark.seal.fill"
                     )
                     .font(.caption2)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
                 }
             } else {
                 Label(
@@ -286,7 +286,7 @@ struct AddProviderPopover: View {
                     systemImage: hasAttemptedSubmit ? "exclamationmark.triangle.fill" : "info.circle"
                 )
                 .font(.caption2)
-                .foregroundStyle(hasAttemptedSubmit ? .red : .secondary)
+                .foregroundStyle(hasAttemptedSubmit ? Color.semanticDanger : .secondary)
             }
         }
         .padding(10)
@@ -322,6 +322,7 @@ private struct ProviderButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -372,7 +373,7 @@ private struct ProviderButton: View {
         .buttonStyle(.gridItem(hoverColor: provider.color.opacity(0.1)))
         .focusEffectDisabled()
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }

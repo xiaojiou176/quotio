@@ -399,6 +399,9 @@ struct ContentView: View {
     @Environment(QuotaViewModel.self) private var viewModel
     @AppStorage("loggingToFile") private var loggingToFile = true
     @State private var modeManager = OperatingModeManager.shared
+    @State private var uiExperience = UIExperienceSettingsManager.shared
+    @State private var featureFlags = FeatureFlagManager.shared
+    @State private var uiMetrics = UIBaselineMetricsTracker.shared
     
     var body: some View {
         @Bindable var vm = viewModel
@@ -406,20 +409,22 @@ struct ContentView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 List(selection: $vm.currentPage) {
-                    Section {
-                        // Always visible
+                    Section("概览") {
                         Label("nav.dashboard".localized(), systemImage: "gauge.with.dots.needle.33percent")
                             .tag(NavigationPage.dashboard)
                         
                         Label("nav.quota".localized(), systemImage: "chart.bar.fill")
                             .tag(NavigationPage.quota)
-                        
+                    }
+
+                    Section("资源") {
                         Label(modeManager.isMonitorMode ? "nav.accounts".localized() : "nav.providers".localized(), 
                               systemImage: "person.2.badge.key")
                             .tag(NavigationPage.providers)
-                        
-                        // Proxy mode only (local or remote)
-                        if modeManager.isProxyMode {
+                    }
+
+                    if modeManager.isProxyMode {
+                        Section("运行与观测") {
                             HStack(spacing: 6) {
                                 Label("nav.fallback".localized(), systemImage: "arrow.triangle.branch")
                                 ExperimentalBadge()
@@ -430,16 +435,21 @@ struct ContentView: View {
                                 Label("nav.agents".localized(), systemImage: "terminal")
                                     .tag(NavigationPage.agents)
                             }
-                            
+
                             Label("nav.apiKeys".localized(), systemImage: "key.horizontal")
                                 .tag(NavigationPage.apiKeys)
-                            
+
                             if modeManager.isLocalProxyMode && loggingToFile {
                                 Label("nav.logs".localized(), systemImage: "doc.text")
                                     .tag(NavigationPage.logs)
                             }
+
+                            Label("nav.usageStats".localized(fallback: "使用统计"), systemImage: "chart.line.uptrend.xyaxis")
+                                .tag(NavigationPage.usageStats)
                         }
-                        
+                    }
+
+                    Section("系统") {
                         Label("nav.settings".localized(), systemImage: "gearshape")
                             .tag(NavigationPage.settings)
                         
@@ -447,6 +457,7 @@ struct ContentView: View {
                             .tag(NavigationPage.about)
                     }
                 }
+                .environment(\.defaultMinListRowHeight, uiExperience.recommendedMinimumRowHeight)
                 
                 // Control section at bottom - current mode badge + status
                 VStack(spacing: 0) {
@@ -454,7 +465,7 @@ struct ContentView: View {
                     
                     // Current Mode Badge (replaces ModeSwitcherRow)
                     CurrentModeBadge()
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, uiExperience.informationDensity == .compact ? 12 : 16)
                         .padding(.top, 10)
                         .padding(.bottom, 6)
                     
@@ -468,12 +479,21 @@ struct ContentView: View {
                             QuotaRefreshStatusRow(viewModel: viewModel)
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, uiExperience.informationDensity == .compact ? 12 : 16)
                     .padding(.bottom, 10)
                 }
                 .background(.regularMaterial)
             }
             .navigationTitle("Quotio")
+            .onAppear {
+                uiMetrics.mark(
+                    "content.sidebar.appear",
+                    metadata: "mode=\(modeManager.currentMode.rawValue),enhancedUI=\(featureFlags.enhancedUILayout)"
+                )
+            }
+            .onChange(of: vm.currentPage) { _, newPage in
+                uiMetrics.mark("navigation.page_opened", metadata: newPage.rawValue)
+            }
             .toolbar {
                 ToolbarItem {
                     if modeManager.isLocalProxyMode {
@@ -514,6 +534,8 @@ struct ContentView: View {
                 AgentSetupScreen()
             case .apiKeys:
                 APIKeysScreen()
+            case .usageStats:
+                UsageStatsScreen()
             case .logs:
                 LogsScreen()
             case .settings:

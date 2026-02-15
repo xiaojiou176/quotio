@@ -31,7 +31,7 @@ struct RemoteSetupStep: View {
         VStack(spacing: 8) {
             Image(systemName: "network")
                 .font(.system(size: 40))
-                .foregroundStyle(.purple)
+                .foregroundStyle(Color.semanticAccentSecondary)
             
             Text("onboarding.remote.title".localized())
                 .font(.title2)
@@ -57,7 +57,7 @@ struct RemoteSetupStep: View {
                 if !viewModel.remoteEndpoint.isEmpty, let errorKey = urlValidation.localizationKey {
                     Text(errorKey.localized())
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                 }
             }
             
@@ -82,6 +82,8 @@ struct RemoteSetupStep: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("onboarding.remote.managementKey.toggleVisibility".localized(fallback: "切换密钥可见性"))
+                    .help("onboarding.remote.managementKey.toggleVisibility".localized(fallback: "显示或隐藏管理密钥"))
                 }
                 
                 Text("onboarding.remote.managementKey.hint".localized())

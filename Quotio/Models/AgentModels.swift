@@ -311,9 +311,7 @@ nonisolated struct AgentConfiguration: Codable, Sendable {
         self.apiKey = apiKey
         self.useOAuth = agent == .geminiCLI
         self.setupMode = setupMode
-        self.modelSlots = Dictionary(uniqueKeysWithValues: ModelSlot.allCases.compactMap { slot in
-            AvailableModel.defaultModels[slot].map { (slot, $0.name) }
-        })
+        self.modelSlots = [:]
     }
 
     /// Initialize with saved model slots (for restoring existing configuration)
@@ -323,15 +321,12 @@ nonisolated struct AgentConfiguration: Codable, Sendable {
         self.apiKey = apiKey
         self.useOAuth = agent == .geminiCLI
         self.setupMode = setupMode
-
-        // Start with defaults, then overlay saved slots
-        var slots = Dictionary(uniqueKeysWithValues: ModelSlot.allCases.compactMap { slot in
-            AvailableModel.defaultModels[slot].map { (slot, $0.name) }
-        })
-        for (slot, model) in savedModelSlots {
-            slots[slot] = model
+        self.modelSlots = savedModelSlots.reduce(into: [:]) { partialResult, item in
+            let model = item.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !model.isEmpty {
+                partialResult[item.key] = model
+            }
         }
-        self.modelSlots = slots
     }
 }
 

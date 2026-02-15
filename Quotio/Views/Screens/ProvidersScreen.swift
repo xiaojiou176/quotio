@@ -26,12 +26,17 @@ struct ProvidersScreen: View {
     @State private var showAddProviderPopover = false
     @State private var switchingAccount: AccountRowData?
     @State private var modeManager = OperatingModeManager.shared
+    @State private var uiExperience = UIExperienceSettingsManager.shared
+    @State private var featureFlags = FeatureFlagManager.shared
+    @State private var uiMetrics = UIBaselineMetricsTracker.shared
     @State private var egressMapping: EgressMappingResponse?
     @State private var egressMappingError: String?
     @State private var isRefreshingEgressMapping = false
     @State private var showOnlyEgressIssues = false
     @State private var selectedEgressProviderFilter = "__all__"
     @State private var egressSortMode: EgressSortMode = .issuesFirst
+    @State private var prioritizeAnomalies = true
+    @State private var compactAccountsView = false
 
     private let customProviderService = CustomProviderService.shared
     private let warpService = WarpService.shared
@@ -149,12 +154,40 @@ struct ProvidersScreen: View {
     
     /// Sorted providers for consistent display order
     private var sortedProviders: [AIProvider] {
-        groupedAccounts.keys.sorted { $0.displayName < $1.displayName }
+        let sorted = groupedAccounts.keys.sorted { $0.displayName < $1.displayName }
+        guard featureFlags.enhancedUILayout, prioritizeAnomalies else { return sorted }
+        return sorted.sorted { lhs, rhs in
+            let lhsSeverity = providerSeverity(lhs)
+            let rhsSeverity = providerSeverity(rhs)
+            if lhsSeverity != rhsSeverity {
+                return lhsSeverity > rhsSeverity
+            }
+            return lhs.displayName < rhs.displayName
+        }
     }
     
     /// Total account count across all providers
     private var totalAccountCount: Int {
         groupedAccounts.values.reduce(0) { $0 + $1.count }
+    }
+
+    private var accountHealthCounts: (error: Int, cooling: Int, disabled: Int, fatalDisabled: Int, networkError: Int) {
+        let all = groupedAccounts.values.flatMap { $0 }
+        let error = all.filter { ($0.status ?? "").lowercased() == "error" }.count
+        let cooling = all.filter { ($0.status ?? "").lowercased() == "cooling" }.count
+        let disabled = all.filter(\.isDisabled).count
+        let fatalDisabled = all.filter { $0.disabledByPolicy || ($0.errorKind == "account_deactivated") || ($0.errorKind == "workspace_deactivated") }.count
+        let networkError = all.filter { $0.errorKind == "network_error" }.count
+        return (error, cooling, disabled, fatalDisabled, networkError)
+    }
+
+    private func providerSeverity(_ provider: AIProvider) -> Int {
+        let accounts = groupedAccounts[provider] ?? []
+        let errorCount = accounts.filter { ($0.status ?? "").lowercased() == "error" }.count
+        let coolingCount = accounts.filter { ($0.status ?? "").lowercased() == "cooling" }.count
+        let disabledCount = accounts.filter { $0.isDisabled }.count
+        let fatalDisabledCount = accounts.filter { $0.disabledByPolicy || ($0.errorKind == "account_deactivated") || ($0.errorKind == "workspace_deactivated") }.count
+        return errorCount * 5 + coolingCount * 2 + disabledCount + fatalDisabledCount * 8
     }
 
     /// Account count per provider (for AddProviderPopover badge display)
@@ -177,6 +210,7 @@ struct ProvidersScreen: View {
                 customProvidersSection
             }
         }
+        .environment(\.defaultMinListRowHeight, uiExperience.recommendedMinimumRowHeight)
         .navigationTitle(modeManager.isMonitorMode ? "nav.accounts".localized() : "nav.providers".localized())
         .toolbar {
             toolbarContent
@@ -200,8 +234,13 @@ struct ProvidersScreen: View {
             // Failure case is silently ignored - user can retry via UI
         }
         .task {
+            uiMetrics.begin("providers.screen.initial_load")
             await viewModel.loadDirectAuthFiles()
             await refreshEgressMapping()
+            uiMetrics.end(
+                "providers.screen.initial_load",
+                metadata: "providers=\(groupedAccounts.count),accounts=\(totalAccountCount)"
+            )
         }
         .alert("providers.proxyRequired.title".localized(), isPresented: $showProxyRequiredAlert) {
             Button("action.startProxy".localized()) {
@@ -280,8 +319,19 @@ struct ProvidersScreen: View {
                 Image(systemName: "plus")
             }
             .help("providers.addAccount".localized())
+            .accessibilityLabel("providers.addAccount".localized())
         }
         
+        ToolbarItem(placement: .automatic) {
+            Picker("providers.viewMode".localized(fallback: "视图模式"), selection: $compactAccountsView) {
+                Text("providers.viewMode.card".localized(fallback: "卡片")).tag(false)
+                Text("providers.viewMode.compact".localized(fallback: "紧凑")).tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 120)
+            .help("providers.viewDensity.help".localized(fallback: "切换账号展示密度"))
+        }
+
         ToolbarItem(placement: .automatic) {
             Button {
                 Task {
@@ -302,6 +352,7 @@ struct ProvidersScreen: View {
             }
             .disabled(viewModel.isLoadingQuotas)
             .help("action.refresh".localized())
+            .accessibilityLabel("action.refresh".localized())
         }
     }
 
@@ -314,7 +365,7 @@ struct ProvidersScreen: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("status.error".localized(), systemImage: "exclamationmark.triangle.fill")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -430,6 +481,28 @@ struct ProvidersScreen: View {
     @ViewBuilder
     private var accountsSection: some View {
         Section {
+            if featureFlags.enhancedUILayout && !groupedAccounts.isEmpty {
+                Toggle("providers.prioritizeAnomalies".localized(fallback: "异常优先"), isOn: $prioritizeAnomalies)
+                    .toggleStyle(.switch)
+                    .font(.caption)
+
+                Picker("providers.viewMode".localized(fallback: "视图模式"), selection: $compactAccountsView) {
+                    Text("providers.viewMode.card".localized(fallback: "卡片")).tag(false)
+                    Text("providers.viewMode.compact".localized(fallback: "紧凑")).tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 120)
+                .controlSize(.small)
+
+                HStack(spacing: 8) {
+                    providerIssueChip(title: "quota.health.error".localized(fallback: "错误"), value: accountHealthCounts.error, color: Color.semanticDanger)
+                    providerIssueChip(title: "quota.health.cooling".localized(fallback: "冷却中"), value: accountHealthCounts.cooling, color: Color.semanticWarning)
+                    providerIssueChip(title: "quota.status.disabled".localized(fallback: "禁用"), value: accountHealthCounts.disabled, color: .secondary)
+                    providerIssueChip(title: "quota.status.fatalDisabled".localized(fallback: "致命禁用"), value: accountHealthCounts.fatalDisabled, color: Color.semanticDanger)
+                    providerIssueChip(title: "quota.status.networkError".localized(fallback: "网络抖动"), value: accountHealthCounts.networkError, color: Color.semanticInfo)
+                }
+            }
+
             if groupedAccounts.isEmpty {
                 // Empty state
                 AccountsEmptyState(
@@ -442,30 +515,39 @@ struct ProvidersScreen: View {
                 )
             } else {
                 // Grouped accounts by provider
-                ForEach(sortedProviders, id: \.self) { provider in
-                    ProviderDisclosureGroup(
-                        provider: provider,
-                        accounts: groupedAccounts[provider] ?? [],
-                        onDeleteAccount: { account in
-                            Task { await deleteAccount(account) }
-                        },
-                        onEditAccount: { account in
-                            if provider == .glm {
-                                handleEditGlmAccount(account)
-                            } else if provider == .warp {
-                                handleEditWarpAccount(account)
-                            }
-                        },
-                        onSwitchAccount: provider == .antigravity ? { account in
-                            switchingAccount = account
-                        } : nil,
-                        onToggleDisabled: { account in
-                            Task { await toggleAccountDisabled(account) }
-                        },
-                        isAccountActive: provider == .antigravity ? { account in
-                            viewModel.isAntigravityAccountActive(email: account.displayName)
-                        } : nil
-                    )
+                ForEach(Array(sortedProviders.enumerated()), id: \.element) { index, provider in
+                    VStack(spacing: 0) {
+                        ProviderDisclosureGroup(
+                            provider: provider,
+                            accounts: groupedAccounts[provider] ?? [],
+                            onDeleteAccount: { account in
+                                Task { await deleteAccount(account) }
+                            },
+                            onEditAccount: { account in
+                                if provider == .glm {
+                                    handleEditGlmAccount(account)
+                                } else if provider == .warp {
+                                    handleEditWarpAccount(account)
+                                }
+                            },
+                            onSwitchAccount: provider == .antigravity ? { account in
+                                switchingAccount = account
+                            } : nil,
+                            onToggleDisabled: { account in
+                                Task { await toggleAccountDisabled(account) }
+                            },
+                            isAccountActive: provider == .antigravity ? { account in
+                                viewModel.isAntigravityAccountActive(email: account.displayName)
+                            } : nil,
+                            compactMode: compactAccountsView
+                        )
+
+                        if index < sortedProviders.count - 1 {
+                            Divider()
+                                .padding(.leading, 30)
+                        }
+                    }
+                    .listRowSeparator(.hidden)
                 }
             }
         } header: {
@@ -487,6 +569,21 @@ struct ProvidersScreen: View {
                 MenuBarHintView()
             }
         }
+    }
+
+    private func providerIssueChip(title: String, value: Int, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title)
+            Text("\(value)")
+                .fontWeight(.semibold)
+        }
+        .font(.caption2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.12))
+        .foregroundStyle(value > 0 ? color : .secondary)
+        .clipShape(Capsule())
     }
     
     // MARK: - Custom Providers Section
@@ -548,7 +645,7 @@ struct ProvidersScreen: View {
                     systemImage: snapshot.enabled == true ? "checkmark.circle.fill" : "xmark.circle"
                 )
                 .font(.caption)
-                .foregroundStyle(snapshot.enabled == true ? .green : .secondary)
+                .foregroundStyle(snapshot.enabled == true ? Color.semanticSuccess : .secondary)
 
                 if let redaction = snapshot.sensitiveRedaction, !redaction.isEmpty {
                     Text(String(format: "providers.egress.redaction".localized(), redaction))
@@ -643,7 +740,7 @@ struct ProvidersScreen: View {
                 if let driftCount = account.driftCount {
                     Text(String(format: "providers.egress.drift".localized(), driftCount))
                         .font(.caption)
-                        .foregroundStyle(driftCount > 0 ? .orange : .secondary)
+                        .foregroundStyle(driftCount > 0 ? Color.semanticWarning : .secondary)
                 } else {
                     Text("providers.egress.driftUnknown".localized())
                         .font(.caption)
@@ -664,18 +761,18 @@ struct ProvidersScreen: View {
                     systemImage: hasIssues ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
                 )
                 .font(.caption2)
-                .foregroundStyle(hasIssues ? .orange : .green)
+                .foregroundStyle(hasIssues ? Color.semanticWarning : Color.semanticSuccess)
 
                 if account.driftAlerted == true {
                     Label("providers.egress.alerted".localized(), systemImage: "bell.badge.fill")
                         .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                 }
 
                 if let status = account.consistencyStatus, !status.isEmpty {
                     Text(String(format: "providers.egress.status".localized(), localizedConsistencyStatus(status)))
                         .font(.caption2)
-                        .foregroundStyle(status.lowercased() == "ok" ? Color.secondary : Color.orange)
+                        .foregroundStyle(status.lowercased() == "ok" ? Color.secondary : Color.semanticWarning)
                 }
             }
 
@@ -713,8 +810,15 @@ struct ProvidersScreen: View {
             return
         }
 
+        uiMetrics.begin("providers.egress.refresh")
         isRefreshingEgressMapping = true
-        defer { isRefreshingEgressMapping = false }
+        defer {
+            isRefreshingEgressMapping = false
+            uiMetrics.end(
+                "providers.egress.refresh",
+                metadata: egressMappingError == nil ? "ok" : "error"
+            )
+        }
         let previousSnapshot = egressMapping
         egressMappingError = nil
 
@@ -988,7 +1092,7 @@ struct CustomProviderRow: View {
                 onToggle()
             } label: {
                 Image(systemName: provider.isEnabled ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(provider.isEnabled ? .green : .secondary)
+                    .foregroundStyle(provider.isEnabled ? Color.semanticSuccess : .secondary)
             }
             .buttonStyle(.subtle)
             .help(provider.isEnabled ? "customProviders.disable".localized() : "customProviders.enable".localized())
@@ -1035,16 +1139,18 @@ struct MenuBarBadge: View {
         Button(action: onTap) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+                    .fill(isSelected ? Color.semanticSelectionFill : Color.clear)
                     .frame(width: 28, height: 28)
 
                 Image(systemName: isSelected ? "chart.bar.fill" : "chart.bar")
                     .font(.system(size: 14))
-                    .foregroundStyle(isSelected ? .blue : .secondary)
+                    .foregroundStyle(isSelected ? Color.semanticInfo : .secondary)
             }
         }
         .buttonStyle(.plain)
         .nativeTooltip(isSelected ? "menubar.hideFromMenuBar".localized() : "menubar.showOnMenuBar".localized())
+        .accessibilityLabel("menubar.toggle".localized(fallback: "菜单栏显示开关"))
+        .accessibilityValue(isSelected ? "state.enabled".localized(fallback: "已开启") : "state.disabled".localized(fallback: "已关闭"))
     }
 }
 
@@ -1180,7 +1286,7 @@ struct MenuBarHintView: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "chart.bar.fill")
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.semanticInfo)
                 .font(.caption2)
             Text("menubar.hint".localized())
                 .font(.caption2)
@@ -1272,7 +1378,7 @@ struct OAuthSheet: View {
                     )
                 )
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.semanticWarning)
                 Text("providers.gemini.tip.keepBoth".localized())
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -1281,7 +1387,7 @@ struct OAuthSheet: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.08))
+                .fill(Color.semanticWarning.opacity(0.08))
         )
     }
 
@@ -1475,6 +1581,8 @@ struct OAuthSheet: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .accessibilityLabel("oauth.authMethod".localized())
+                    .help("oauth.authMethod".localized())
                     
 
                 }
@@ -1503,7 +1611,7 @@ struct OAuthSheet: View {
                         Label("oauth.retry".localized(), systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.orange)
+                    .tint(Color.semanticWarning)
                 } else if !isSuccess {
                     Button {
                         hasStartedAuth = true
@@ -1527,7 +1635,7 @@ struct OAuthSheet: View {
         .frame(width: 480)
         .frame(minHeight: 350)
         .fixedSize(horizontal: false, vertical: true)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.oauthState?.status)
+        .motionAwareAnimation(.easeInOut(duration: 0.2), value: viewModel.oauthState?.status)
         .onChange(of: viewModel.oauthState?.status) { _, newStatus in
             if newStatus == .success {
                 Task {
@@ -1545,9 +1653,18 @@ private struct OAuthStatusView: View {
     let state: String?
     let authURL: String?
     let provider: AIProvider
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     /// Stable rotation angle for spinner animation (fixes UUID() infinite re-render)
     @State private var rotationAngle: Double = 0
+
+    private func restartPollingSpinner() {
+        rotationAngle = 0
+        guard !reduceMotion else { return }
+        withMotionAwareAnimation(.linear(duration: 1).repeatForever(autoreverses: false), reduceMotion: reduceMotion) {
+            rotationAngle = 360
+        }
+    }
     
     /// Visual feedback for copy action
     @State private var copied = false
@@ -1578,9 +1695,13 @@ private struct OAuthStatusView: View {
                             .frame(width: 60, height: 60)
                             .rotationEffect(.degrees(rotationAngle - 90))
                             .onAppear {
-                                withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
-                                    rotationAngle = 360
-                                }
+                                restartPollingSpinner()
+                            }
+                            .onDisappear {
+                                rotationAngle = 0
+                            }
+                            .onChange(of: reduceMotion) { _, _ in
+                                restartPollingSpinner()
                             }
                         
                         Image(systemName: "person.badge.key.fill")
@@ -1672,11 +1793,11 @@ private struct OAuthStatusView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 48))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.semanticSuccess)
                     
                     Text("oauth.success".localized())
                         .font(.headline)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.semanticSuccess)
                     
                     Text("oauth.closingSheet".localized())
                         .font(.caption)
@@ -1688,11 +1809,11 @@ private struct OAuthStatusView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 48))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                     
                     Text("oauth.failed".localized())
                         .font(.headline)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                     
                     if let error = error {
                         Text(error)

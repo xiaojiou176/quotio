@@ -81,7 +81,7 @@ struct RemoteConnectionSheet: View {
         HStack(spacing: 16) {
             Image(systemName: "network")
                 .font(.title2)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.semanticInfo)
                 .frame(width: 32, height: 32)
             
             VStack(alignment: .leading, spacing: 2) {
@@ -103,6 +103,8 @@ struct RemoteConnectionSheet: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("action.close".localized())
+            .help("action.close".localized())
         }
         .padding(20)
     }
@@ -135,16 +137,16 @@ struct RemoteConnectionSheet: View {
                 if let errorMessage = urlValidation.errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                 } else if isInsecureHTTP {
                     Label("remote.httpWarning".localized(), systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                 }
             }
         }
         .padding()
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
@@ -169,7 +171,7 @@ struct RemoteConnectionSheet: View {
             }
         }
         .padding()
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
@@ -196,7 +198,7 @@ struct RemoteConnectionSheet: View {
             if !verifySSL {
                 Label("remote.verifySSL.warning".localized(), systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.semanticWarning)
             }
             
             HStack {
@@ -210,10 +212,12 @@ struct RemoteConnectionSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 200)
+                .accessibilityLabel("remote.timeout".localized())
+                .help("remote.timeout".localized())
             }
         }
         .padding()
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
@@ -222,7 +226,7 @@ struct RemoteConnectionSheet: View {
     private func testResultSection(_ result: RemoteTestResult) -> some View {
         HStack(spacing: 12) {
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(result.success ? .green : .red)
+                .foregroundStyle(result.success ? Color.semanticSuccess : Color.semanticDanger)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.success ? "remote.test.success".localized() : "remote.test.failed".localized())
@@ -239,7 +243,7 @@ struct RemoteConnectionSheet: View {
             Spacer()
         }
         .padding()
-        .background(result.success ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
+        .background(result.success ? Color.semanticSuccess.opacity(0.1) : Color.semanticDanger.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     

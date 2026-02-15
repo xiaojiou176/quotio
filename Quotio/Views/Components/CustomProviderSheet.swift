@@ -97,6 +97,8 @@ struct CustomProviderSheet: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("action.close".localized())
+            .help("action.close".localized())
         }
         .padding(20)
     }
@@ -122,7 +124,7 @@ struct CustomProviderSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 
-                Picker("Type", selection: $providerType) {
+                Picker("customProviders.providerType".localized(fallback: "提供商类型"), selection: $providerType) {
                     ForEach(CustomProviderType.allCases) { type in
                         HStack {
                             Image(type.menuBarIconName)
@@ -150,7 +152,7 @@ struct CustomProviderSheet: View {
                         .foregroundStyle(.secondary)
                     
                     if !providerType.requiresBaseURL, let defaultURL = providerType.defaultBaseURL {
-                        Text("(default: \(defaultURL))")
+                        Text("(\("customProviders.default".localized(fallback: "默认")): \(defaultURL))")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -176,7 +178,7 @@ struct CustomProviderSheet: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
     
@@ -204,7 +206,7 @@ struct CustomProviderSheet: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
     
@@ -222,9 +224,11 @@ struct CustomProviderSheet: View {
                         apiKeys.remove(at: index)
                     } label: {
                         Image(systemName: "trash")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.semanticDanger)
                     }
                     .buttonStyle(.rowActionDestructive)
+                    .accessibilityLabel("action.delete".localized())
+                    .help("customProviders.apiKeys.remove".localized(fallback: "删除 API Key"))
                 }
             }
             
@@ -242,7 +246,7 @@ struct CustomProviderSheet: View {
             .font(.caption)
         }
         .padding(12)
-        .background(Color(.windowBackgroundColor))
+        .background(Color.semanticSurfaceBase)
         .cornerRadius(6)
     }
     
@@ -283,7 +287,7 @@ struct CustomProviderSheet: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
     
@@ -309,9 +313,11 @@ struct CustomProviderSheet: View {
                     models.remove(at: index)
                 } label: {
                     Image(systemName: "trash")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.semanticDanger)
                 }
                 .buttonStyle(.rowActionDestructive)
+                .accessibilityLabel("action.delete".localized())
+                .help("customProviders.model.remove".localized(fallback: "删除模型映射"))
             }
             
             HStack(spacing: 8) {
@@ -370,7 +376,7 @@ struct CustomProviderSheet: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
     
@@ -395,9 +401,11 @@ struct CustomProviderSheet: View {
                 headers.remove(at: index)
             } label: {
                 Image(systemName: "trash")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.semanticDanger)
             }
             .buttonStyle(.rowActionDestructive)
+            .accessibilityLabel("action.delete".localized())
+            .help("customProviders.header.remove".localized(fallback: "删除请求头"))
         }
     }
     
@@ -416,7 +424,7 @@ struct CustomProviderSheet: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceMuted)
         .cornerRadius(8)
     }
     

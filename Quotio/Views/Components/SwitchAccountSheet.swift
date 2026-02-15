@@ -49,7 +49,7 @@ struct SwitchAccountSheet: View {
         HStack(spacing: 12) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.title2)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.semanticInfo)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text("antigravity.switch.title".localized())
@@ -92,13 +92,13 @@ struct SwitchAccountSheet: View {
             if isIDERunning {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text("antigravity.switch.ideRunning".localized())
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 .padding(12)
-                .background(Color.orange.opacity(0.1))
+                .background(Color.semanticWarning.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
@@ -133,7 +133,7 @@ struct SwitchAccountSheet: View {
         return HStack(spacing: 10) {
             if isComplete {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
             } else if isCurrent {
                 ProgressView()
                     .scaleEffect(0.7)
@@ -170,11 +170,11 @@ struct SwitchAccountSheet: View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.semanticSuccess)
             
             Text("antigravity.switch.success".localized())
                 .font(.headline)
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.semanticSuccess)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
@@ -184,11 +184,11 @@ struct SwitchAccountSheet: View {
         VStack(spacing: 12) {
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.semanticDanger)
             
             Text("antigravity.switch.failed".localized())
                 .font(.headline)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.semanticDanger)
             
             Text(message)
                 .font(.caption)

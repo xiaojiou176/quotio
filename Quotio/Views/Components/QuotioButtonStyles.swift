@@ -6,7 +6,18 @@
 //  These styles provide subtle or no focus rings while maintaining accessibility.
 //
 
+import Foundation
 import SwiftUI
+
+private enum FocusRingPolicy {
+    static var disableFocusEffect: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "ui.visibleFocusRingEnabled") == nil {
+            return false
+        }
+        return !defaults.bool(forKey: "ui.visibleFocusRingEnabled")
+    }
+}
 
 // MARK: - Subtle Button Style
 
@@ -24,7 +35,7 @@ struct SubtleButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(configuration.isPressed ? hoverColor : .clear)
             )
-            .focusEffectDisabled(true)
+            .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
     }
 }
 
@@ -40,7 +51,7 @@ struct RowActionButtonStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(foregroundColor)
             .opacity(configuration.isPressed ? pressedOpacity : 1.0)
-            .focusEffectDisabled(true)
+            .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
     }
 }
 
@@ -68,6 +79,7 @@ struct MenuRowButtonStyle: ButtonStyle {
         let cornerRadius: CGFloat
         
         @State private var isHovered = false
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         
         var body: some View {
             configuration.label
@@ -78,11 +90,11 @@ struct MenuRowButtonStyle: ButtonStyle {
                         .fill(configuration.isPressed ? hoverColor.opacity(1.5) : (isHovered ? hoverColor : .clear))
                 )
                 .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                         isHovered = hovering
                     }
                 }
-                .focusEffectDisabled(true)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
         }
     }
 }
@@ -109,6 +121,7 @@ struct GridItemButtonStyle: ButtonStyle {
         let cornerRadius: CGFloat
         
         @State private var isHovered = false
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         
         var body: some View {
             configuration.label
@@ -117,11 +130,11 @@ struct GridItemButtonStyle: ButtonStyle {
                         .fill(configuration.isPressed ? hoverColor.opacity(1.5) : (isHovered ? hoverColor : .clear))
                 )
                 .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                         isHovered = hovering
                     }
                 }
-                .focusEffectDisabled(true)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
         }
     }
 }
@@ -148,6 +161,7 @@ struct ToolbarIconButtonStyle: ButtonStyle {
         let cornerRadius: CGFloat
         
         @State private var isHovered = false
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         
         var body: some View {
             configuration.label
@@ -157,11 +171,11 @@ struct ToolbarIconButtonStyle: ButtonStyle {
                         .fill(configuration.isPressed ? Color.primary.opacity(0.15) : (isHovered ? Color.primary.opacity(0.08) : .clear))
                 )
                 .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                         isHovered = hovering
                     }
                 }
-                .focusEffectDisabled(true)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
         }
     }
 }
@@ -174,7 +188,7 @@ struct SectionHeaderButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.5 : 1.0)
-            .focusEffectDisabled(true)
+            .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
     }
 }
 
@@ -191,7 +205,7 @@ extension ButtonStyle where Self == RowActionButtonStyle {
     
     /// A destructive row action button style.
     static var rowActionDestructive: RowActionButtonStyle {
-        RowActionButtonStyle(foregroundColor: .red.opacity(0.8))
+        RowActionButtonStyle(foregroundColor: Color.semanticDanger.opacity(0.8))
     }
 }
 
@@ -274,7 +288,7 @@ extension ButtonStyle where Self == SectionHeaderButtonStyle {
                 }
                 .frame(width: 60, height: 60)
             }
-            .buttonStyle(.gridItem(hoverColor: .blue.opacity(0.1)))
+            .buttonStyle(.gridItem(hoverColor: Color.semanticSelectionFill))
         }
         
         // Toolbar Icon
@@ -290,7 +304,7 @@ extension ButtonStyle where Self == SectionHeaderButtonStyle {
         HStack {
             Text("Section Header:")
             Button { } label: {
-                Label("Add", systemImage: "plus.circle")
+                Label("action.add".localized(fallback: "添加"), systemImage: "plus.circle")
                     .font(.caption)
             }
             .buttonStyle(.sectionHeader)

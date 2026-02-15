@@ -245,6 +245,60 @@ actor ManagementAPIClient {
         return try JSONDecoder().decode(UsageStats.self, from: data)
     }
     
+    /// Fetch request history with pagination and filters
+    func fetchRequestHistory(
+        limit: Int = 100,
+        offset: Int = 0,
+        model: String? = nil,
+        provider: String? = nil,
+        success: Bool? = nil,
+        requestId: String? = nil,
+        account: String? = nil,
+        source: String? = nil
+    ) async throws -> RequestHistoryResponse {
+        var queryParams: [String] = [
+            "limit=\(limit)",
+            "offset=\(offset)"
+        ]
+        if let model = model {
+            queryParams.append("model=\(model)")
+        }
+        if let provider = provider {
+            queryParams.append("provider=\(provider)")
+        }
+        if let success = success {
+            queryParams.append("success=\(success)")
+        }
+        if let requestId = requestId, !requestId.isEmpty {
+            queryParams.append("request_id=\(requestId)")
+        }
+        if let account = account, !account.isEmpty {
+            queryParams.append("auth_index=\(account)")
+        }
+        if let source = source, !source.isEmpty {
+            queryParams.append("source=\(source)")
+        }
+        
+        let endpoint = "/usage/history?\(queryParams.joined(separator: "&"))"
+        let data = try await makeRequest(endpoint)
+        return try JSONDecoder().decode(RequestHistoryResponse.self, from: data)
+    }
+    
+    /// Create SSE stream URL for real-time usage events
+    func getSSEStreamURL() -> URL? {
+        return URL(string: "\(baseURL)/usage/stream")
+    }
+    
+    /// Export usage statistics for backup
+    func exportUsageStats() async throws -> Data {
+        return try await makeRequest("/usage/export")
+    }
+    
+    /// Import usage statistics from backup
+    func importUsageStats(data: Data) async throws {
+        _ = try await makeRequest("/usage/import", method: "POST", body: data)
+    }
+    
     func getOAuthURL(
         for provider: AIProvider,
         projectId: String? = nil,

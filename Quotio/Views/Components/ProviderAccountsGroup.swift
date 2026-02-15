@@ -147,6 +147,8 @@ struct AllAccountsSection: View {
                 }
                 .buttonStyle(.sectionHeader)
                 .disabled(isRefreshing)
+                .accessibilityLabel("action.refresh".localized())
+                .help("action.refresh".localized())
             }
         }
     }

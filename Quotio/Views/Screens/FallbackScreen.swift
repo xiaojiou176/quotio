@@ -15,6 +15,17 @@ struct FallbackScreen: View {
     @State private var showReconfigureAlert = false
     @State private var showDuplicateNameAlert = false
     @State private var previousFallbackEnabled: Bool?
+    @State private var modelCatalogState: ModelCatalogState = .idle
+    @State private var modelCatalogErrorMessage: String?
+
+    private enum ModelCatalogState: Equatable {
+        case idle
+        case loading
+        case disabled
+        case empty
+        case error
+        case success(count: Int, fallbackData: Bool)
+    }
 
     /// Check if Bridge Mode is enabled
     private var isBridgeModeEnabled: Bool {
@@ -37,6 +48,9 @@ struct FallbackScreen: View {
         List {
             // Section 1: Global Settings
             globalSettingsSection
+
+            // Section 1.5: Model catalog status
+            modelCatalogStatusSection
 
             // Section 2: Active Route Status (only show when there are active routes)
             if fallbackSettings.isEnabled && !fallbackSettings.activeRouteStates.isEmpty {
@@ -93,7 +107,7 @@ struct FallbackScreen: View {
             )
         }
         .task {
-            await loadModelsIfNeeded()
+            await refreshModelCatalog(forceRefresh: false)
         }
         // Alert when Fallback toggle changes
         .alert("fallback.reconfigureRequired".localized(), isPresented: $showReconfigureAlert) {
@@ -111,12 +125,36 @@ struct FallbackScreen: View {
 
     // MARK: - Load Models
 
-    private func loadModelsIfNeeded() async {
-        // Load models using AgentSetupViewModel if not already loaded
+    private func refreshModelCatalog(forceRefresh: Bool) async {
         let agentVM = viewModel.agentSetupViewModel
+
+        guard viewModel.proxyManager.proxyStatus.running else {
+            modelCatalogState = .disabled
+            modelCatalogErrorMessage = nil
+            return
+        }
+
+        if !forceRefresh, !agentVM.availableModels.isEmpty {
+            modelCatalogState = .success(count: agentVM.availableModels.count, fallbackData: false)
+            modelCatalogErrorMessage = nil
+            return
+        }
+
+        modelCatalogState = .loading
+        modelCatalogErrorMessage = nil
+        let loadedFromRemote = await agentVM.loadModels(forceRefresh: forceRefresh)
+
         if agentVM.availableModels.isEmpty {
-            guard viewModel.proxyManager.proxyStatus.running else { return }
-            await agentVM.loadModels(forceRefresh: false)
+            modelCatalogState = loadedFromRemote ? .empty : .error
+            if !loadedFromRemote {
+                modelCatalogErrorMessage = "fallback.modelCatalog.loadFailed".localized(fallback: "模型目录加载失败，请重试。")
+            }
+            return
+        }
+
+        modelCatalogState = .success(count: agentVM.availableModels.count, fallbackData: !loadedFromRemote)
+        if !loadedFromRemote {
+            modelCatalogErrorMessage = "fallback.modelCatalog.cachedFallback".localized(fallback: "当前使用本地默认模型列表。")
         }
     }
 
@@ -130,6 +168,7 @@ struct FallbackScreen: View {
             } label: {
                 Image(systemName: "plus")
             }
+            .accessibilityLabel("fallback.addVirtualModel".localized(fallback: "添加虚拟模型"))
             .help("fallback.addVirtualModel".localized())
             .disabled(!fallbackSettings.isEnabled)
         }
@@ -172,7 +211,7 @@ struct FallbackScreen: View {
             if !isBridgeModeEnabled {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("fallback.bridgeModeRequired".localized())
                             .font(.subheadline)
@@ -186,6 +225,113 @@ struct FallbackScreen: View {
             }
         } header: {
             Label("fallback.settings".localized(), systemImage: "gearshape")
+        }
+    }
+
+    // MARK: - Model Catalog Status
+
+    @ViewBuilder
+    private var modelCatalogStatusSection: some View {
+        Section {
+            switch modelCatalogState {
+            case .idle, .loading:
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("fallback.modelCatalog.loading".localized(fallback: "正在加载模型目录"))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text("fallback.modelCatalog.loadingHint".localized(fallback: "用于新增回退规则时快速选择模型。"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            case .disabled:
+                HStack(spacing: 10) {
+                    Image(systemName: "pause.circle.fill")
+                        .foregroundStyle(Color.semanticWarning)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("fallback.modelCatalog.disabled".localized(fallback: "模型目录已禁用"))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text("fallback.modelCatalog.disabledHint".localized(fallback: "请先启动代理服务后再刷新模型列表。"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            case .empty:
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "tray")
+                            .foregroundStyle(Color.semanticWarning)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("fallback.modelCatalog.empty".localized(fallback: "未发现可用模型"))
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Text("fallback.modelCatalog.emptyHint".localized(fallback: "请检查上游账号状态后重试。"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button("action.retry".localized(fallback: "重试")) {
+                        Task { await refreshModelCatalog(forceRefresh: true) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            case .error:
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.semanticDanger)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("fallback.modelCatalog.error".localized(fallback: "模型目录加载失败"))
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Text(modelCatalogErrorMessage ?? "fallback.modelCatalog.loadFailed".localized(fallback: "请稍后重试。"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button("action.retry".localized(fallback: "重试")) {
+                        Task { await refreshModelCatalog(forceRefresh: true) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            case .success(let count, let fallbackData):
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.semanticSuccess)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("fallback.modelCatalog.ready".localized(fallback: "模型目录可用"))
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Text("fallback.modelCatalog.count".localized(fallback: "可选模型: \(count)"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("action.refresh".localized(fallback: "刷新")) {
+                            Task { await refreshModelCatalog(forceRefresh: true) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    if fallbackData, let warning = modelCatalogErrorMessage {
+                        Text(warning)
+                            .font(.caption2)
+                            .foregroundStyle(Color.semanticWarning)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Label("fallback.modelCatalog".localized(fallback: "模型目录"), systemImage: "square.stack.3d.up")
         }
     }
 
@@ -222,11 +368,11 @@ struct FallbackScreen: View {
                     // Status indicator
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(.orange)
+                            .fill(Color.semanticWarning)
                             .frame(width: 6, height: 6)
                         Text("fallback.routeActive".localized())
                             .font(.caption2)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                     }
                 }
                 .padding(.vertical, 4)
@@ -247,7 +393,7 @@ struct FallbackScreen: View {
                     .font(.caption2.bold())
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.2))
+                    .background(Color.semanticWarningFill)
                     .clipShape(Capsule())
             }
         } footer: {
@@ -351,7 +497,7 @@ struct VirtualModelsEmptyState: View {
             } else {
                 Text("fallback.enableFirst".localized())
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.semanticWarning)
             }
         }
         .frame(maxWidth: .infinity)
@@ -400,7 +546,7 @@ struct VirtualModelRow: View {
             } label: {
                 Label("fallback.addEntry".localized(), systemImage: "plus.circle")
                     .font(.subheadline)
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.semanticInfo)
             }
             .buttonStyle(.plain)
             .disabled(!isGlobalEnabled)
@@ -441,9 +587,11 @@ struct VirtualModelRow: View {
                     onToggle()
                 } label: {
                     Image(systemName: model.isEnabled ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(model.isEnabled && isGlobalEnabled ? .green : .secondary)
+                        .foregroundStyle(model.isEnabled && isGlobalEnabled ? Color.semanticSuccess : .secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(model.isEnabled ? "action.disable".localized(fallback: "禁用") : "action.enable".localized(fallback: "启用"))
+                .help(model.isEnabled ? "fallback.disableModel".localized(fallback: "禁用该虚拟模型") : "fallback.enableModel".localized(fallback: "启用该虚拟模型"))
                 .disabled(!isGlobalEnabled)
             }
             .contextMenu {
@@ -523,9 +671,11 @@ struct FallbackEntryRow: View {
                 showDeleteConfirmation = true
             } label: {
                 Image(systemName: "minus.circle.fill")
-                    .foregroundStyle(.red.opacity(0.7))
+                    .foregroundStyle(Color.semanticDanger.opacity(0.7))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("action.delete".localized())
+            .help("action.delete".localized())
         }
         .padding(.vertical, 4)
         .padding(.leading, 8)

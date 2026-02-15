@@ -5,10 +5,12 @@
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct SettingsScreen: View {
     @Environment(QuotaViewModel.self) private var viewModel
     @State private var modeManager = OperatingModeManager.shared
+    @State private var showRestoreOriginalConfirmation = false
     private let launchManager = LaunchAtLoginManager.shared
     
     var body: some View {
@@ -58,8 +60,9 @@ struct SettingsScreen: View {
                 }
 
                 Button("troubleshooting.restoreOriginal".localized()) {
-                    CLIProxyManager.shared.removeBaseURLWorkaround()
+                    showRestoreOriginalConfirmation = true
                 }
+                .foregroundStyle(Color.semanticDanger)
             } header: {
                 Label("troubleshooting.title".localized(), systemImage: "hammer.fill")
             } footer: {
@@ -68,6 +71,9 @@ struct SettingsScreen: View {
 
             // Appearance
             AppearanceSettingsSection()
+
+            // UI experience and accessibility
+            UIExperienceSection()
             
             // Privacy
             PrivacySettingsSection()
@@ -92,6 +98,12 @@ struct SettingsScreen: View {
             
             // Menu Bar
             MenuBarSettingsSection()
+
+            // Feature rollout controls
+            FeatureFlagSection()
+
+            // Local audit trail for critical settings changes
+            SettingsAuditSection()
             
             // Paths - Only in Local Proxy Mode
             if modeManager.isLocalProxyMode {
@@ -100,6 +112,18 @@ struct SettingsScreen: View {
         }
         .formStyle(.grouped)
         .navigationTitle("nav.settings".localized())
+        .confirmationDialog(
+            "troubleshooting.restoreOriginal".localized(),
+            isPresented: $showRestoreOriginalConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("action.confirm".localized(fallback: "确认"), role: .destructive) {
+                CLIProxyManager.shared.removeBaseURLWorkaround()
+            }
+            Button("action.cancel".localized(), role: .cancel) {}
+        } message: {
+            Text("troubleshooting.restoreOriginal.message".localized(fallback: "此操作会移除当前修复方案并恢复原始行为。"))
+        }
         .onAppear {
             NSLog("[SettingsScreen] View appeared - mode: \(modeManager.currentMode.rawValue), proxy running: \(viewModel.proxyManager.proxyStatus.running)")
         }
@@ -310,10 +334,10 @@ struct RemoteServerSection: View {
     
     private var statusColor: Color {
         switch modeManager.connectionStatus {
-        case .connected: return .green
-        case .connecting: return .orange
+        case .connected: return Color.semanticSuccess
+        case .connecting: return Color.semanticWarning
         case .disconnected: return .gray
-        case .error: return .red
+        case .error: return Color.semanticDanger
         }
     }
     
@@ -353,6 +377,7 @@ struct RemoteServerSection: View {
 struct UnifiedProxySettingsSection: View {
     @Environment(QuotaViewModel.self) private var viewModel
     @State private var modeManager = OperatingModeManager.shared
+    @State private var settingsAudit = SettingsAuditTrail.shared
     
     @State private var isLoading = true
     @State private var loadError: String?
@@ -367,6 +392,15 @@ struct UnifiedProxySettingsSection: View {
     @State private var loggingToFile = true
     @State private var requestLog = false
     @State private var debugMode = false
+    @State private var lastProxyURLValue = ""
+    @State private var lastRoutingStrategyValue = "round-robin"
+    @State private var lastSwitchProjectValue = true
+    @State private var lastSwitchPreviewModelValue = true
+    @State private var lastRequestRetryValue = 3
+    @State private var lastMaxRetryIntervalValue = 30
+    @State private var lastLoggingToFileValue = true
+    @State private var lastRequestLogValue = false
+    @State private var lastDebugModeValue = false
     
     @State private var proxyURLValidation: ProxyURLValidationResult = .empty
     @State private var showHybridMappingEditor = false
@@ -523,7 +557,7 @@ struct UnifiedProxySettingsSection: View {
                 Section {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                         Text(error)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -608,6 +642,8 @@ struct UnifiedProxySettingsSection: View {
                     TextField("", text: $proxyURL)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 220)
+                        .accessibilityLabel("settings.upstreamProxy".localized())
+                        .help("settings.upstreamProxy".localized())
                         .onChange(of: proxyURL) { _, newValue in
                             proxyURLValidation = ProxyURLValidator.validate(newValue)
                         }
@@ -619,7 +655,7 @@ struct UnifiedProxySettingsSection: View {
                 if proxyURLValidation != .valid && proxyURLValidation != .empty {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                         Text((proxyURLValidation.localizationKey ?? "").localized())
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -705,7 +741,7 @@ struct UnifiedProxySettingsSection: View {
             if let syncError = hybridMappingSyncError, !syncError.isEmpty {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(
                             String(
@@ -788,7 +824,7 @@ struct UnifiedProxySettingsSection: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("settings.hybridNamespace.persistedHelp".localized())
                 Text(hybridMappingSyncStatusText)
-                    .foregroundStyle(hybridMappingSyncError == nil ? Color.secondary : Color.orange)
+                    .foregroundStyle(hybridMappingSyncError == nil ? Color.secondary : Color.semanticWarning)
             }
             .font(.caption)
         }
@@ -871,6 +907,15 @@ struct UnifiedProxySettingsSection: View {
             debugMode = config.debug ?? false
             switchProject = config.quotaExceeded?.switchProject ?? true
             switchPreviewModel = config.quotaExceeded?.switchPreviewModel ?? true
+            lastProxyURLValue = proxyURL
+            lastRoutingStrategyValue = routingStrategy
+            lastRequestRetryValue = requestRetry
+            lastMaxRetryIntervalValue = maxRetryInterval
+            lastLoggingToFileValue = loggingToFile
+            lastRequestLogValue = requestLog
+            lastDebugModeValue = debugMode
+            lastSwitchProjectValue = switchProject
+            lastSwitchPreviewModelValue = switchPreviewModel
             proxyURLValidation = ProxyURLValidator.validate(proxyURL)
             isLoading = false
             
@@ -889,10 +934,13 @@ struct UnifiedProxySettingsSection: View {
     /// `CLIProxyManager.syncProxyURLInConfig()` during proxy startup), then sent to the
     /// proxy API to take effect immediately. Only valid or empty URLs are saved.
     private func saveProxyURL() async {
+        let previousValue = lastProxyURLValue
+        let sanitized = proxyURLValidation == .valid ? ProxyURLValidator.sanitize(proxyURL) : proxyURL
+
         if proxyURL.isEmpty {
             UserDefaults.standard.set("", forKey: "proxyURL")
         } else if proxyURLValidation == .valid {
-            UserDefaults.standard.set(ProxyURLValidator.sanitize(proxyURL), forKey: "proxyURL")
+            UserDefaults.standard.set(sanitized, forKey: "proxyURL")
         }
 
         guard let apiClient = viewModel.apiClient else { return }
@@ -900,8 +948,15 @@ struct UnifiedProxySettingsSection: View {
             if proxyURL.isEmpty {
                 try await apiClient.deleteProxyURL()
             } else if proxyURLValidation == .valid {
-                try await apiClient.setProxyURL(ProxyURLValidator.sanitize(proxyURL))
+                try await apiClient.setProxyURL(sanitized)
             }
+            settingsAudit.recordChange(
+                key: "proxy_url",
+                oldValue: previousValue,
+                newValue: proxyURL.isEmpty ? "" : sanitized,
+                source: "settings.unified_proxy"
+            )
+            lastProxyURLValue = proxyURL.isEmpty ? "" : sanitized
         } catch {
             NSLog("[RemoteSettings] Failed to save proxy URL: \(error)")
         }
@@ -911,6 +966,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setRoutingStrategy(strategy)
+            settingsAudit.recordChange(
+                key: "routing_strategy",
+                oldValue: lastRoutingStrategyValue,
+                newValue: strategy,
+                source: "settings.unified_proxy"
+            )
+            lastRoutingStrategyValue = strategy
         } catch {
             NSLog("[RemoteSettings] Failed to save routing strategy: \(error)")
         }
@@ -920,6 +982,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setQuotaExceededSwitchProject(enabled)
+            settingsAudit.recordChange(
+                key: "quota_exceeded.switch_project",
+                oldValue: String(lastSwitchProjectValue),
+                newValue: String(enabled),
+                source: "settings.unified_proxy"
+            )
+            lastSwitchProjectValue = enabled
         } catch {
             NSLog("[RemoteSettings] Failed to save switch project: \(error)")
         }
@@ -929,6 +998,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setQuotaExceededSwitchPreviewModel(enabled)
+            settingsAudit.recordChange(
+                key: "quota_exceeded.switch_preview_model",
+                oldValue: String(lastSwitchPreviewModelValue),
+                newValue: String(enabled),
+                source: "settings.unified_proxy"
+            )
+            lastSwitchPreviewModelValue = enabled
         } catch {
             NSLog("[RemoteSettings] Failed to save switch preview model: \(error)")
         }
@@ -938,6 +1014,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setRequestRetry(count)
+            settingsAudit.recordChange(
+                key: "request_retry",
+                oldValue: String(lastRequestRetryValue),
+                newValue: String(count),
+                source: "settings.unified_proxy"
+            )
+            lastRequestRetryValue = count
         } catch {
             NSLog("[RemoteSettings] Failed to save request retry: \(error)")
         }
@@ -947,6 +1030,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setMaxRetryInterval(seconds)
+            settingsAudit.recordChange(
+                key: "max_retry_interval",
+                oldValue: String(lastMaxRetryIntervalValue),
+                newValue: String(seconds),
+                source: "settings.unified_proxy"
+            )
+            lastMaxRetryIntervalValue = seconds
         } catch {
             NSLog("[RemoteSettings] Failed to save max retry interval: \(error)")
         }
@@ -956,6 +1046,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setLoggingToFile(enabled)
+            settingsAudit.recordChange(
+                key: "logging_to_file",
+                oldValue: String(lastLoggingToFileValue),
+                newValue: String(enabled),
+                source: "settings.unified_proxy"
+            )
+            lastLoggingToFileValue = enabled
         } catch {
             NSLog("[RemoteSettings] Failed to save logging to file: \(error)")
         }
@@ -965,6 +1062,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setRequestLog(enabled)
+            settingsAudit.recordChange(
+                key: "request_log",
+                oldValue: String(lastRequestLogValue),
+                newValue: String(enabled),
+                source: "settings.unified_proxy"
+            )
+            lastRequestLogValue = enabled
         } catch {
             NSLog("[RemoteSettings] Failed to save request log: \(error)")
         }
@@ -974,6 +1078,13 @@ struct UnifiedProxySettingsSection: View {
         guard let apiClient = viewModel.apiClient else { return }
         do {
             try await apiClient.setDebug(enabled)
+            settingsAudit.recordChange(
+                key: "debug_mode",
+                oldValue: String(lastDebugModeValue),
+                newValue: String(enabled),
+                source: "settings.unified_proxy"
+            )
+            lastDebugModeValue = enabled
         } catch {
             NSLog("[RemoteSettings] Failed to save debug mode: \(error)")
         }
@@ -1036,6 +1147,14 @@ struct UnifiedProxySettingsSection: View {
         hybridMappingSyncError = nil
         localMutation()
         await syncHybridMappingsToManagementAPI()
+        if hybridMappingSyncError == nil {
+            settingsAudit.recordChange(
+                key: "hybrid_namespace_model_set",
+                oldValue: "local_cache",
+                newValue: String(describing: action),
+                source: "settings.unified_proxy"
+            )
+        }
         hybridMappingActiveAction = nil
     }
 
@@ -1223,14 +1342,14 @@ private struct HybridNamespaceModelSetEditorSheet: View {
                     if let namespaceValidationMessage {
                         Label(namespaceValidationMessage, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                     }
                     TextField("settings.hybridNamespace.editor.baseURLPlaceholder".localized(), text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                     if let baseURLValidationMessage {
                         Label(baseURLValidationMessage, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                     }
                 }
 
@@ -1251,7 +1370,7 @@ private struct HybridNamespaceModelSetEditorSheet: View {
                     if let modelSetValidationMessage {
                         Label(modelSetValidationMessage, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                     }
                 }
 
@@ -1266,7 +1385,7 @@ private struct HybridNamespaceModelSetEditorSheet: View {
                             ForEach(validationMessages, id: \.self) { message in
                                 Label(message, systemImage: "exclamationmark.triangle.fill")
                                     .font(.caption)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(Color.semanticWarning)
                             }
                         }
                     }
@@ -1282,7 +1401,7 @@ private struct HybridNamespaceModelSetEditorSheet: View {
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     }
                 }
             }
@@ -1340,7 +1459,7 @@ struct LocalProxyServerSection: View {
             LabeledContent("settings.status".localized()) {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(viewModel.proxyManager.proxyStatus.running ? .green : .gray)
+                        .fill(viewModel.proxyManager.proxyStatus.running ? Color.semanticSuccess : Color.secondary)
                         .frame(width: 8, height: 8)
                     Text(viewModel.proxyManager.proxyStatus.running ? "status.running".localized() : "status.stopped".localized())
                 }
@@ -1396,13 +1515,13 @@ struct NetworkAccessSection: View {
             LabeledContent("settings.bindAddress".localized()) {
                 Text(allowNetworkAccess ? "0.0.0.0 (All Interfaces)" : "127.0.0.1 (Localhost)")
                     .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(allowNetworkAccess ? .orange : .secondary)
+                    .foregroundStyle(allowNetworkAccess ? Color.semanticWarning : .secondary)
             }
             
             if allowNetworkAccess {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text("settings.networkAccessWarning".localized())
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1464,12 +1583,25 @@ struct PathLabel: View {
                     .font(.caption)
             }
             .buttonStyle(.borderless)
+            .help("settings.path.copy".localized(fallback: "复制路径"))
+            .accessibilityLabel("settings.path.copy".localized(fallback: "复制路径"))
+
+            Button {
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            } label: {
+                Image(systemName: "folder")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .help("settings.path.openFinder".localized(fallback: "在 Finder 中打开"))
+            .accessibilityLabel("settings.path.openFinder".localized(fallback: "在 Finder 中打开"))
         }
     }
 }
 
 struct NotificationSettingsSection: View {
     private let notificationManager = NotificationManager.shared
+    @State private var settingsAudit = SettingsAuditTrail.shared
     
     var body: some View {
         @Bindable var manager = notificationManager
@@ -1477,28 +1609,73 @@ struct NotificationSettingsSection: View {
         Section {
             Toggle("settings.notifications.enabled".localized(), isOn: Binding(
                 get: { manager.notificationsEnabled },
-                set: { manager.notificationsEnabled = $0 }
+                set: {
+                    let old = manager.notificationsEnabled
+                    manager.notificationsEnabled = $0
+                    settingsAudit.recordChange(
+                        key: "notifications.enabled",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.notifications"
+                    )
+                }
             ))
             
             if manager.notificationsEnabled {
                 Toggle("settings.notifications.quotaLow".localized(), isOn: Binding(
                     get: { manager.notifyOnQuotaLow },
-                    set: { manager.notifyOnQuotaLow = $0 }
+                    set: {
+                        let old = manager.notifyOnQuotaLow
+                        manager.notifyOnQuotaLow = $0
+                        settingsAudit.recordChange(
+                            key: "notifications.quota_low",
+                            oldValue: String(old),
+                            newValue: String($0),
+                            source: "settings.notifications"
+                        )
+                    }
                 ))
                 
                 Toggle("settings.notifications.cooling".localized(), isOn: Binding(
                     get: { manager.notifyOnCooling },
-                    set: { manager.notifyOnCooling = $0 }
+                    set: {
+                        let old = manager.notifyOnCooling
+                        manager.notifyOnCooling = $0
+                        settingsAudit.recordChange(
+                            key: "notifications.cooling",
+                            oldValue: String(old),
+                            newValue: String($0),
+                            source: "settings.notifications"
+                        )
+                    }
                 ))
                 
                 Toggle("settings.notifications.proxyCrash".localized(), isOn: Binding(
                     get: { manager.notifyOnProxyCrash },
-                    set: { manager.notifyOnProxyCrash = $0 }
+                    set: {
+                        let old = manager.notifyOnProxyCrash
+                        manager.notifyOnProxyCrash = $0
+                        settingsAudit.recordChange(
+                            key: "notifications.proxy_crash",
+                            oldValue: String(old),
+                            newValue: String($0),
+                            source: "settings.notifications"
+                        )
+                    }
                 ))
                 
                 Toggle("settings.notifications.upgradeAvailable".localized(), isOn: Binding(
                     get: { manager.notifyOnUpgradeAvailable },
-                    set: { manager.notifyOnUpgradeAvailable = $0 }
+                    set: {
+                        let old = manager.notifyOnUpgradeAvailable
+                        manager.notifyOnUpgradeAvailable = $0
+                        settingsAudit.recordChange(
+                            key: "notifications.upgrade_available",
+                            oldValue: String(old),
+                            newValue: String($0),
+                            source: "settings.notifications"
+                        )
+                    }
                 ))
                 
                 HStack {
@@ -1506,7 +1683,16 @@ struct NotificationSettingsSection: View {
                     Spacer()
                     Picker("", selection: Binding(
                         get: { Int(manager.quotaAlertThreshold) },
-                        set: { manager.quotaAlertThreshold = Double($0) }
+                        set: {
+                            let old = Int(manager.quotaAlertThreshold)
+                            manager.quotaAlertThreshold = Double($0)
+                            settingsAudit.recordChange(
+                                key: "notifications.threshold",
+                                oldValue: String(old),
+                                newValue: String($0),
+                                source: "settings.notifications"
+                            )
+                        }
                     )) {
                         Text("10%").tag(10)
                         Text("20%").tag(20)
@@ -1515,13 +1701,15 @@ struct NotificationSettingsSection: View {
                     }
                     .pickerStyle(.menu)
                     .frame(width: 80)
+                    .accessibilityLabel("settings.notifications.threshold".localized())
+                    .help("settings.notifications.threshold".localized())
                 }
             }
             
             if !manager.isAuthorized {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text("settings.notifications.notAuthorized".localized())
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1697,7 +1885,7 @@ struct ProxyUpdateSettingsSection: View {
                             Text("settings.proxyUpdate.available".localized())
                         } icon: {
                             Image(systemName: "arrow.up.circle.fill")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(Color.semanticSuccess)
                         }
                         
                         Text("v\(upgrade.version)")
@@ -1728,7 +1916,7 @@ struct ProxyUpdateSettingsSection: View {
                         Text("settings.proxyUpdate.upToDate".localized())
                     } icon: {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Color.semanticSuccess)
                     }
                     
                     Spacer()
@@ -1779,7 +1967,7 @@ struct ProxyUpdateSettingsSection: View {
             if let error = upgradeError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1790,7 +1978,7 @@ struct ProxyUpdateSettingsSection: View {
             if proxyManager.upgradeAvailable && !proxyManager.proxyStatus.running {
                 HStack {
                     Image(systemName: "info.circle")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.semanticInfo)
                     Text("settings.proxyUpdate.proxyMustRun".localized())
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1897,6 +2085,8 @@ struct ProxyVersionManagerSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("action.close".localized())
+                .help("action.close".localized())
             }
             .padding()
             
@@ -1915,7 +2105,7 @@ struct ProxyVersionManagerSheet: View {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text("settings.proxyUpdate.advanced.fetchError".localized())
                         .font(.headline)
                     Text(error)
@@ -1976,7 +2166,7 @@ struct ProxyVersionManagerSheet: View {
                 Divider()
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1988,9 +2178,11 @@ struct ProxyVersionManagerSheet: View {
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("action.dismiss".localized(fallback: "关闭错误提示"))
+                    .help("action.dismiss".localized(fallback: "关闭错误提示"))
                 }
                 .padding()
-                .background(Color.orange.opacity(0.1))
+                .background(Color.semanticWarningFill)
             }
         }
         .frame(width: 500, height: 500)
@@ -2026,7 +2218,7 @@ struct ProxyVersionManagerSheet: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+        .background(Color.semanticSurfaceBase.opacity(0.5))
     }
     
     private func isVersionInstalled(_ version: String) -> Bool {
@@ -2141,7 +2333,7 @@ private struct InstalledVersionRow: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.green)
+                            .background(Color.semanticSuccess)
                             .clipShape(Capsule())
                     }
                 }
@@ -2168,7 +2360,9 @@ private struct InstalledVersionRow: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.semanticDanger)
+                .accessibilityLabel("action.delete".localized())
+                .help("action.delete".localized())
             }
         }
         .padding(.horizontal, 16)
@@ -2217,10 +2411,10 @@ private struct AvailableVersionRow: View {
                         Text("settings.proxyUpdate.advanced.prerelease".localized())
                             .font(.caption2)
                             .fontWeight(.medium)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.semanticWarning)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.15))
+                            .background(Color.semanticWarning.opacity(0.15))
                             .clipShape(Capsule())
                     }
                     
@@ -2450,6 +2644,262 @@ struct AppearanceSettingsSection: View {
     }
 }
 
+// MARK: - UI Experience Section
+
+struct UIExperienceSection: View {
+    @State private var settings = UIExperienceSettingsManager.shared
+    @State private var settingsAudit = SettingsAuditTrail.shared
+
+    private var densityBinding: Binding<InformationDensity> {
+        Binding(
+            get: { settings.informationDensity },
+            set: {
+                let old = settings.informationDensity
+                settings.informationDensity = $0
+                settingsAudit.recordChange(
+                    key: "ui.information_density",
+                    oldValue: old.rawValue,
+                    newValue: $0.rawValue,
+                    source: "settings.ui_experience"
+                )
+            }
+        )
+    }
+
+    var body: some View {
+        Section {
+            Picker("settings.density.title".localized(fallback: "信息密度"), selection: densityBinding) {
+                ForEach(InformationDensity.allCases) { mode in
+                    Text(mode.localizationKey.localized(fallback: mode.rawValue)).tag(mode)
+                }
+            }
+
+            Toggle("settings.a11y.highContrast".localized(fallback: "高对比度模式"), isOn: Binding(
+                get: { settings.highContrastEnabled },
+                set: {
+                    let old = settings.highContrastEnabled
+                    settings.highContrastEnabled = $0
+                    settingsAudit.recordChange(
+                        key: "ui.high_contrast",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.ui_experience"
+                    )
+                }
+            ))
+
+            Toggle("settings.a11y.largerText".localized(fallback: "更大字号"), isOn: Binding(
+                get: { settings.largerTextEnabled },
+                set: {
+                    let old = settings.largerTextEnabled
+                    settings.largerTextEnabled = $0
+                    settingsAudit.recordChange(
+                        key: "ui.larger_text",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.ui_experience"
+                    )
+                }
+            ))
+
+            Toggle("settings.a11y.visibleFocus".localized(fallback: "显示键盘焦点"), isOn: Binding(
+                get: { settings.visibleFocusRingEnabled },
+                set: {
+                    let old = settings.visibleFocusRingEnabled
+                    settings.visibleFocusRingEnabled = $0
+                    settingsAudit.recordChange(
+                        key: "ui.visible_focus_ring",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.ui_experience"
+                    )
+                }
+            ))
+
+            Toggle("settings.debug.capturePayload".localized(fallback: "捕获请求Payload证据（脱敏）"), isOn: Binding(
+                get: { settings.captureRequestPayloadEvidence },
+                set: {
+                    let old = settings.captureRequestPayloadEvidence
+                    settings.captureRequestPayloadEvidence = $0
+                    settingsAudit.recordChange(
+                        key: "ui.capture_payload_evidence",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.ui_experience"
+                    )
+                }
+            ))
+        } header: {
+            Label("settings.uiExperience".localized(fallback: "UI 体验"), systemImage: "rectangle.compress.vertical")
+        } footer: {
+            Text("settings.uiExperience.help".localized(fallback: "用于改善阅读密度、键盘导航与视觉可达性。"))
+                .font(.caption)
+        }
+    }
+}
+
+// MARK: - Feature Flags Section
+
+struct FeatureFlagSection: View {
+    @State private var flags = FeatureFlagManager.shared
+    @State private var settingsAudit = SettingsAuditTrail.shared
+
+    var body: some View {
+        Section {
+            Toggle("settings.flags.enhancedUI".localized(fallback: "启用增强布局"), isOn: Binding(
+                get: { flags.enhancedUILayout },
+                set: {
+                    let old = flags.enhancedUILayout
+                    flags.enhancedUILayout = $0
+                    settingsAudit.recordChange(
+                        key: "feature.enhanced_ui_layout",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.feature_flags"
+                    )
+                }
+            ))
+            Toggle("settings.flags.observability".localized(fallback: "启用观测联动"), isOn: Binding(
+                get: { flags.enhancedObservability },
+                set: {
+                    let old = flags.enhancedObservability
+                    flags.enhancedObservability = $0
+                    settingsAudit.recordChange(
+                        key: "feature.enhanced_observability",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.feature_flags"
+                    )
+                }
+            ))
+            Toggle("settings.flags.accessibility".localized(fallback: "启用无障碍强化"), isOn: Binding(
+                get: { flags.accessibilityHardening },
+                set: {
+                    let old = flags.accessibilityHardening
+                    flags.accessibilityHardening = $0
+                    settingsAudit.recordChange(
+                        key: "feature.accessibility_hardening",
+                        oldValue: String(old),
+                        newValue: String($0),
+                        source: "settings.feature_flags"
+                    )
+                }
+            ))
+        } header: {
+            Label("settings.flags.title".localized(fallback: "功能灰度"), systemImage: "testtube.2")
+        } footer: {
+            Text("settings.flags.help".localized(fallback: "用于分批发布新 UI、观测和无障碍能力。"))
+                .font(.caption)
+        }
+    }
+}
+
+// MARK: - Settings Audit Section
+
+struct SettingsAuditSection: View {
+    @State private var audit = SettingsAuditTrail.shared
+    @State private var showClearConfirmation = false
+    @State private var searchText = ""
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    var body: some View {
+        Section {
+            TextField("settings.audit.searchPlaceholder".localized(fallback: "搜索设置项"), text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+
+            if audit.events.isEmpty {
+                Text("settings.audit.empty".localized(fallback: "暂无设置变更记录"))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(filteredEvents) { event in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(humanizedKey(event.key))
+                            .font(.caption.bold())
+                        Text("\(event.oldValue) → \(event.newValue)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(Self.formatter.string(from: event.timestamp)) · \(event.source)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+
+            HStack {
+                Button("settings.audit.export".localized(fallback: "导出审计记录")) {
+                    exportAudit()
+                }
+                .buttonStyle(.borderless)
+
+                Spacer()
+
+                Button("settings.audit.clear".localized(fallback: "清空")) {
+                    showClearConfirmation = true
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.semanticDanger)
+            }
+        } header: {
+            Label("settings.audit.title".localized(fallback: "设置审计"), systemImage: "doc.badge.clock")
+        } footer: {
+            Text("settings.audit.help".localized(fallback: "记录关键设置项变更（前值、后值、时间、来源页面）。"))
+                .font(.caption)
+        }
+        .confirmationDialog(
+            "settings.audit.clear".localized(fallback: "清空审计"),
+            isPresented: $showClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("action.confirm".localized(fallback: "确认"), role: .destructive) {
+                audit.clear()
+            }
+            Button("action.cancel".localized(), role: .cancel) {}
+        } message: {
+            Text("settings.audit.clear.warning".localized(fallback: "清空后无法恢复，建议先导出审计记录。"))
+        }
+    }
+
+    private func exportAudit() {
+        do {
+            let data = try audit.exportData()
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "quotio-settings-audit-\(Date().ISO8601Format()).json"
+            panel.allowedContentTypes = [.json]
+            if panel.runModal() == .OK, let url = panel.url {
+                try data.write(to: url, options: .atomic)
+            }
+        } catch {
+            NSLog("[SettingsAuditSection] Failed to export audit trail: \(error.localizedDescription)")
+        }
+    }
+
+    private var filteredEvents: [SettingsAuditEvent] {
+        let recent = audit.recent(limit: 20)
+        guard !searchText.isEmpty else { return recent }
+        let q = searchText.lowercased()
+        return recent.filter { event in
+            event.key.lowercased().contains(q)
+            || event.source.lowercased().contains(q)
+            || event.newValue.lowercased().contains(q)
+            || event.oldValue.lowercased().contains(q)
+        }
+    }
+
+    private func humanizedKey(_ key: String) -> String {
+        key
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: ".", with: " / ")
+            .capitalized
+    }
+}
+
 // MARK: - Privacy Settings Section
 
 struct PrivacySettingsSection: View {
@@ -2518,20 +2968,20 @@ struct AboutTab: View {
         VStack(spacing: 16) {
             Image(systemName: "gauge.with.dots.needle.67percent")
                 .font(.system(size: 48))
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.semanticInfo)
             
             Text("Quotio")
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("CLIProxyAPI GUI Wrapper")
+            Text("about.tagline".localized(fallback: "CLIProxyAPI GUI Wrapper"))
                 .foregroundStyle(.secondary)
             
-            Text("Version 1.0")
+            Text("about.version".localized(fallback: "Version") + " 1.0")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             
-            Link("GitHub: CLIProxyAPI", destination: URL(string: "https://github.com/router-for-me/CLIProxyAPI")!)
+            Link("about.links.cliproxyapi".localized(fallback: "GitHub: CLIProxyAPI"), destination: URL(string: "https://github.com/router-for-me/CLIProxyAPI")!)
                 .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2579,7 +3029,7 @@ struct AboutScreen: View {
             .frame(maxWidth: .infinity)
             .padding(40)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.semanticSurfaceBase)
         .overlay {
             if showCopiedToast {
                 versionCopyToast
@@ -2605,8 +3055,8 @@ struct AboutScreen: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.blue.opacity(0.2),
-                                Color.purple.opacity(0.1),
+                                Color.semanticInfo.opacity(0.2),
+                                Color.semanticAccentSecondary.opacity(0.1),
                                 Color.clear
                             ],
                             startPoint: .topLeading,
@@ -2640,7 +3090,7 @@ struct AboutScreen: View {
             // Version Badges
             HStack(spacing: 12) {
                 VersionBadge(
-                    label: "Version",
+                    label: "about.version".localized(fallback: "Version"),
                     value: appVersion,
                     icon: "tag"
                 )
@@ -2649,7 +3099,7 @@ struct AboutScreen: View {
                 }
                 
                 VersionBadge(
-                    label: "Build",
+                    label: "about.build".localized(fallback: "Build"),
                     value: buildNumber,
                     icon: "hammer.fill"
                 )
@@ -2685,7 +3135,7 @@ struct AboutScreen: View {
     
     private var linksSection: some View {
         VStack(spacing: 16) {
-            Text("Links")
+            Text("about.links.title".localized(fallback: "Links"))
                 .font(.headline)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2695,16 +3145,16 @@ struct AboutScreen: View {
                 spacing: 12
             ) {
                 LinkCard(
-                    title: "GitHub: Quotio",
+                    title: "about.links.quotio".localized(fallback: "GitHub: Quotio"),
                     icon: "link",
-                    color: .blue,
+                    color: Color.semanticInfo,
                     url: URL(string: "https://github.com/nguyenphutrong/quotio")!
                 )
                 
                 LinkCard(
-                    title: "GitHub: CLIProxyAPI",
+                    title: "about.links.cliproxyapi".localized(fallback: "GitHub: CLIProxyAPI"),
                     icon: "link",
-                    color: .purple,
+                    color: Color.semanticAccentSecondary,
                     url: URL(string: "https://github.com/router-for-me/CLIProxyAPI")!
                 )
                 
@@ -2738,8 +3188,8 @@ struct AboutScreen: View {
             
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("Version copied to clipboard")
+                    .foregroundStyle(Color.semanticSuccess)
+                Text("about.version.copied".localized(fallback: "Version copied to clipboard"))
                     .font(.subheadline)
                     .fontWeight(.medium)
             }
@@ -2799,7 +3249,7 @@ struct AboutUpdateSection: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
             #if canImport(Sparkle)
@@ -2853,7 +3303,7 @@ struct AboutProxyUpdateSection: View {
                             Text("settings.proxyUpdate.available".localized())
                         } icon: {
                             Image(systemName: "arrow.up.circle.fill")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(Color.semanticSuccess)
                         }
                         
                         Text("v\(upgrade.version)")
@@ -2884,7 +3334,7 @@ struct AboutProxyUpdateSection: View {
                         Text("settings.proxyUpdate.upToDate".localized())
                     } icon: {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Color.semanticSuccess)
                     }
                     
                     Spacer()
@@ -2923,7 +3373,7 @@ struct AboutProxyUpdateSection: View {
             if let error = upgradeError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -2934,7 +3384,7 @@ struct AboutProxyUpdateSection: View {
             if !proxyManager.proxyStatus.running {
                 HStack {
                     Image(systemName: "info.circle")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.semanticInfo)
                     Text("settings.proxyUpdate.proxyMustRun".localized())
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -2957,7 +3407,7 @@ struct AboutProxyUpdateSection: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .sheet(isPresented: $showAdvancedSheet) {
             ProxyVersionManagerSheet()
@@ -3003,6 +3453,7 @@ struct VersionBadge: View {
     let icon: String
     
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     var body: some View {
         Button {
@@ -3010,15 +3461,15 @@ struct VersionBadge: View {
             pasteboard.clearContents()
             pasteboard.setString(value, forType: .string)
         } label: {
-            HStack(spacing: 6) {
+                HStack(spacing: 6) {
                     Image(systemName: icon)
                         .font(.caption)
-                        .foregroundStyle(isHovered ? .blue : .secondary)
+                        .foregroundStyle(isHovered ? Color.semanticInfo : .secondary)
                 
                 Text(label)
                     .font(.caption)
                     .fontWeight(.medium)
-                    .foregroundStyle(isHovered ? .blue : .secondary)
+                    .foregroundStyle(isHovered ? Color.semanticInfo : .secondary)
                 
                 Text(value)
                     .font(.caption)
@@ -3027,20 +3478,20 @@ struct VersionBadge: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
-                isHovered ? Color.blue.opacity(0.1) : Color.secondary.opacity(0.05),
+                isHovered ? Color.semanticInfo.opacity(0.1) : Color.secondary.opacity(0.05),
                 in: Capsule()
             )
             .overlay(
                 Capsule()
                     .strokeBorder(
-                        isHovered ? Color.blue.opacity(0.3) : Color.secondary.opacity(0.2),
+                        isHovered ? Color.semanticInfo.opacity(0.3) : Color.secondary.opacity(0.2),
                         lineWidth: 1
                     )
             )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -3052,6 +3503,7 @@ struct VersionBadge: View {
 struct AboutUpdateCard: View {
     @AppStorage("autoCheckUpdates") private var autoCheckUpdates = true
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     #if canImport(Sparkle)
     private let updaterService = UpdaterService.shared
@@ -3062,7 +3514,7 @@ struct AboutUpdateCard: View {
             HStack {
                 Image(systemName: "arrow.down.circle")
                     .font(.title3)
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.semanticInfo)
                 Text("settings.updates".localized())
                     .font(.headline)
                 Spacer()
@@ -3076,6 +3528,8 @@ struct AboutUpdateCard: View {
                 Toggle("", isOn: $autoCheckUpdates)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .accessibilityLabel("settings.autoCheckUpdates".localized())
+                    .help("settings.autoCheckUpdates".localized())
                     .onChange(of: autoCheckUpdates) { _, newValue in
                         updaterService.automaticallyChecksForUpdates = newValue
                     }
@@ -3093,6 +3547,8 @@ struct AboutUpdateCard: View {
                 ))
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .accessibilityLabel("settings.updateChannel.receiveBeta".localized())
+                    .help("settings.updateChannel.receiveBeta".localized())
             }
             
             HStack {
@@ -3121,7 +3577,7 @@ struct AboutUpdateCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(
             color: .black.opacity(isHovered ? 0.08 : 0.04),
@@ -3131,7 +3587,7 @@ struct AboutUpdateCard: View {
         )
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withMotionAwareAnimation(.easeInOut(duration: 0.2), reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -3143,6 +3599,7 @@ struct AboutUpdateCard: View {
 struct AboutProxyUpdateCard: View {
     @Environment(QuotaViewModel.self) private var viewModel
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showAdvancedSheet = false
     @State private var isCheckingForUpdate = false
     @State private var isUpgrading = false
@@ -3161,7 +3618,7 @@ struct AboutProxyUpdateCard: View {
             HStack {
                 Image(systemName: "shippingbox.and.arrow.backward")
                     .font(.title3)
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(Color.semanticAccentSecondary)
                 Text("settings.proxyUpdate".localized())
                     .font(.headline)
                 Spacer()
@@ -3190,7 +3647,7 @@ struct AboutProxyUpdateCard: View {
                         Text("v\(upgrade.version) " + "settings.proxyUpdate.available".localized())
                     } icon: {
                         Image(systemName: "arrow.up.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Color.semanticSuccess)
                     }
                     .font(.caption)
                     
@@ -3218,7 +3675,7 @@ struct AboutProxyUpdateCard: View {
                         Text("settings.proxyUpdate.upToDate".localized())
                     } icon: {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Color.semanticSuccess)
                     }
                     .font(.caption)
                     
@@ -3259,7 +3716,7 @@ struct AboutProxyUpdateCard: View {
             if let error = upgradeError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.semanticWarning)
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -3270,7 +3727,7 @@ struct AboutProxyUpdateCard: View {
             if proxyManager.upgradeAvailable && !proxyManager.proxyStatus.running {
                 HStack {
                     Image(systemName: "info.circle")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.semanticInfo)
                     Text("settings.proxyUpdate.proxyMustRun".localized())
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -3295,7 +3752,7 @@ struct AboutProxyUpdateCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(
             color: .black.opacity(isHovered ? 0.08 : 0.04),
@@ -3305,7 +3762,7 @@ struct AboutProxyUpdateCard: View {
         )
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withMotionAwareAnimation(.easeInOut(duration: 0.2), reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -3355,6 +3812,7 @@ struct LinkCard: View {
     let action: (() -> Void)?
     
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     init(
         title: String,
@@ -3406,7 +3864,7 @@ struct LinkCard: View {
                 }
             }
             .padding(14)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(Color.semanticSurfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
@@ -3425,7 +3883,7 @@ struct LinkCard: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -3440,9 +3898,10 @@ struct ManagementKeyRow: View {
     @State private var regenerateError: String?
     @State private var showRegenerateConfirmation = false
     @State private var showCopyConfirmation = false
+    @State private var temporaryReveal = false
     
     private var displayKey: String {
-        if settings.hideSensitiveInfo {
+        if settings.hideSensitiveInfo && !temporaryReveal {
             let key = viewModel.proxyManager.managementKey
             return String(repeating: "•", count: 8) + "..." + key.suffix(4)
         }
@@ -3471,11 +3930,28 @@ struct ManagementKeyRow: View {
                     Image(systemName: showCopyConfirmation ? "checkmark" : "doc.on.doc")
                         .font(.caption)
                         .frame(width: 14, height: 14)
-                        .foregroundStyle(showCopyConfirmation ? .green : .primary)
+                        .foregroundStyle(showCopyConfirmation ? Color.semanticSuccess : .primary)
                         .modifier(SymbolEffectTransitionModifier())
                 }
                 .buttonStyle(.borderless)
                 .help("action.copy".localized())
+                .accessibilityLabel("action.copy".localized())
+
+                if settings.hideSensitiveInfo {
+                    Button {
+                        temporaryReveal = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(8))
+                            temporaryReveal = false
+                        }
+                    } label: {
+                        Image(systemName: temporaryReveal ? "eye.fill" : "eye")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("settings.managementKey.revealTemporary".localized(fallback: "临时显示 8 秒"))
+                    .accessibilityLabel("settings.managementKey.revealTemporary".localized(fallback: "临时显示 8 秒"))
+                }
                 
                 Button {
                     showRegenerateConfirmation = true
@@ -3492,6 +3968,7 @@ struct ManagementKeyRow: View {
                 .buttonStyle(.borderless)
                 .disabled(viewModel.proxyManager.isRegeneratingKey)
                 .help("settings.managementKey.regenerate".localized())
+                .accessibilityLabel("settings.managementKey.regenerate".localized())
             }
         }
         .confirmationDialog(
@@ -3559,7 +4036,7 @@ struct LaunchAtLoginToggle: View {
             if showLocationWarning {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(Color.semanticWarning)
                         .font(.caption)
                     Text("launchAtLogin.warning.notInApplications".localized())
                         .font(.caption)
@@ -3617,6 +4094,8 @@ struct UsageDisplaySettingsSection: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .accessibilityLabel("settings.usageDisplay.totalMode.title".localized())
+                .help("settings.usageDisplay.totalMode.title".localized())
                 
                 Text("settings.usageDisplay.totalMode.description".localized())
                     .font(.caption)
@@ -3636,6 +4115,8 @@ struct UsageDisplaySettingsSection: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .accessibilityLabel("settings.usageDisplay.modelAggregation.title".localized())
+                .help("settings.usageDisplay.modelAggregation.title".localized())
                 
                 Text("settings.usageDisplay.modelAggregation.description".localized())
                     .font(.caption)

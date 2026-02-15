@@ -34,14 +34,94 @@ enum AccountSortOption: String, CaseIterable, Identifiable {
     }
 }
 
+enum AccountStatusFilter: String, CaseIterable, Identifiable {
+    case all = "all"
+    case ready = "ready"
+    case cooling = "cooling"
+    case error = "error"
+    case disabled = "disabled"
+    case quota5h = "quota5h"
+    case quota7d = "quota7d"
+    case fatalDisabled = "fatalDisabled"
+    case networkError = "networkError"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "logs.all".localized(fallback: "全部")
+        case .ready: return "quota.status.ready".localized(fallback: "可用")
+        case .cooling: return "quota.status.cooling".localized(fallback: "冷却中")
+        case .error: return "quota.status.error".localized(fallback: "错误")
+        case .disabled: return "quota.status.disabled".localized(fallback: "禁用")
+        case .quota5h: return "quota.status.quota5h".localized(fallback: "5h 冷却")
+        case .quota7d: return "quota.status.quota7d".localized(fallback: "7d 冷却")
+        case .fatalDisabled: return "quota.status.fatalDisabled".localized(fallback: "致命禁用")
+        case .networkError: return "quota.status.networkError".localized(fallback: "网络抖动")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .all: return "line.3.horizontal.decrease.circle"
+        case .ready: return "checkmark.circle.fill"
+        case .cooling: return "clock.badge.exclamationmark"
+        case .error: return "xmark.circle.fill"
+        case .disabled: return "minus.circle.fill"
+        case .quota5h: return "clock.arrow.circlepath"
+        case .quota7d: return "calendar.badge.clock"
+        case .fatalDisabled: return "exclamationmark.octagon.fill"
+        case .networkError: return "wifi.exclamationmark"
+        }
+    }
+}
+
+private enum CodexRoutingBucket: String, CaseIterable, Identifiable {
+    case main
+    case tokenInvalidated
+    case quota5h
+    case quota7d
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .main:
+            return "codex.bucket.main".localized(fallback: "可用")
+        case .tokenInvalidated:
+            return "codex.bucket.tokenInvalidated".localized(fallback: "需重登")
+        case .quota5h:
+            return "codex.bucket.quota5h".localized(fallback: "5h 冷却")
+        case .quota7d:
+            return "codex.bucket.quota7d".localized(fallback: "7d 冷却")
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .main: return Color.semanticSuccess
+        case .tokenInvalidated: return Color.semanticDanger
+        case .quota5h: return Color.semanticWarning
+        case .quota7d: return Color.semanticAccentSecondary
+        }
+    }
+}
+
 struct QuotaScreen: View {
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modeManager = OperatingModeManager.shared
 
     @State private var selectedProvider: AIProvider?
     @State private var settings = MenuBarSettingsManager.shared
+    @State private var uiExperience = UIExperienceSettingsManager.shared
+    @State private var featureFlags = FeatureFlagManager.shared
+    @State private var uiMetrics = UIBaselineMetricsTracker.shared
     @State private var searchText: String = ""
     @State private var sortOption: AccountSortOption = .name
+    @State private var prioritizeAnomalies = true
+    @State private var accountStatusFilter: AccountStatusFilter = .all
+    @State private var compactAccountView = false
     
     // MARK: - Data Sources
     
@@ -61,7 +141,27 @@ struct QuotaScreen: View {
             providers.insert(provider)
         }
         
-        return providers.sorted { $0.displayName < $1.displayName }
+        let sorted = providers.sorted { $0.displayName < $1.displayName }
+        guard featureFlags.enhancedUILayout, prioritizeAnomalies else { return sorted }
+        return sorted.sorted { lhs, rhs in
+            let lhsSeverity = providerSeverity(lhs)
+            let rhsSeverity = providerSeverity(rhs)
+            if lhsSeverity != rhsSeverity {
+                return lhsSeverity > rhsSeverity
+            }
+            return lhs.displayName < rhs.displayName
+        }
+    }
+
+    private func providerSeverity(_ provider: AIProvider) -> Int {
+        let accountQuotas = viewModel.providerQuotas[provider] ?? [:]
+        let errorCount = accountQuotas.values.filter { $0.isForbidden }.count
+        let lowQuotaCount = accountQuotas.values.filter { quota in
+            let models = quota.models.map { (name: $0.name, percentage: $0.percentage) }
+            let percent = settings.totalUsagePercent(models: models)
+            return percent >= 0 && percent < 20
+        }.count
+        return errorCount * 5 + lowQuotaCount * 2 + max(0, accountCount(for: provider) / 10)
     }
     
     /// Get account count for a provider
@@ -154,6 +254,8 @@ struct QuotaScreen: View {
                     } label: {
                         Image(systemName: "slider.horizontal.3")
                     }
+                    .accessibilityLabel("quota.displayMode".localized(fallback: "显示模式"))
+                    .help("quota.displayMode".localized(fallback: "切换显示模式"))
                 }
                 
                 ToolbarItem(placement: .primaryAction) {
@@ -164,6 +266,8 @@ struct QuotaScreen: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .accessibilityLabel("action.refresh".localized())
+                .help("action.refresh".localized())
                 .disabled(viewModel.isLoadingQuotas)
             }
         }
@@ -254,21 +358,27 @@ struct QuotaScreen: View {
             // Health Dashboard
             if viewModel.authFiles.count > 0 {
                 healthDashboard
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
+                    .padding(.horizontal, uiExperience.informationDensity.horizontalPadding)
+                    .padding(.top, uiExperience.informationDensity.verticalSpacing)
+            }
+
+            if featureFlags.enhancedUILayout && viewModel.authFiles.count > 0 {
+                anomalyQuickSection
+                    .padding(.horizontal, uiExperience.informationDensity.horizontalPadding)
+                    .padding(.top, 10)
             }
             
             // Search Bar (only show if there are multiple accounts)
             if viewModel.authFiles.count > 3 {
                 searchBar
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, uiExperience.informationDensity.horizontalPadding)
                     .padding(.top, 12)
             }
             
             // Provider Segmented Control
             if availableProviders.count > 1 {
                 providerSegmentedControl
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, uiExperience.informationDensity.horizontalPadding)
                     .padding(.top, 12)
                     .padding(.bottom, 12)
             }
@@ -283,9 +393,11 @@ struct QuotaScreen: View {
                         subscriptionInfos: viewModel.subscriptionInfos[provider] ?? [:],
                         isLoading: viewModel.isLoadingQuotas,
                         searchFilter: searchText,
-                        sortOption: sortOption
+                        sortOption: sortOption,
+                        statusFilter: accountStatusFilter,
+                        compactMode: compactAccountView
                     )
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, uiExperience.informationDensity.horizontalPadding)
                     .padding(.vertical, 16)
                 } else {
                     ContentUnavailableView(
@@ -297,6 +409,12 @@ struct QuotaScreen: View {
                 }
             }
             .scrollContentBackground(.hidden)
+        }
+        .onAppear {
+            uiMetrics.mark(
+                "quota.screen.appear",
+                metadata: "providers=\(availableProviders.count),accounts=\(viewModel.authFiles.count)"
+            )
         }
     }
     
@@ -321,6 +439,8 @@ struct QuotaScreen: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("action.clear".localized(fallback: "清空搜索"))
+                .help("action.clear".localized(fallback: "清空搜索"))
             }
         }
         .padding(.horizontal, 10)
@@ -330,10 +450,52 @@ struct QuotaScreen: View {
                 .fill(Color.primary.opacity(0.04))
         )
     }
+
+    private var anomalyQuickSection: some View {
+        let stats = healthStats
+        return HStack(spacing: 8) {
+            anomalyChip(title: "quota.health.error".localized(fallback: "错误"), value: stats.error, color: Color.semanticDanger, filter: .error)
+            anomalyChip(title: "quota.health.cooling".localized(fallback: "冷却中"), value: stats.cooling, color: Color.semanticWarning, filter: .cooling)
+            anomalyChip(title: "quota.status.disabled".localized(fallback: "禁用"), value: viewModel.authFiles.filter { $0.disabled }.count, color: .secondary, filter: .disabled)
+            anomalyChip(title: "quota.status.quota5h.short".localized(fallback: "5h"), value: viewModel.authFiles.filter { $0.isQuotaLimited5h }.count, color: Color.semanticWarning, filter: .quota5h)
+            anomalyChip(title: "quota.status.quota7d.short".localized(fallback: "7d"), value: viewModel.authFiles.filter { $0.isQuotaLimited7d }.count, color: Color.semanticAccentSecondary, filter: .quota7d)
+            anomalyChip(title: "quota.status.fatal.short".localized(fallback: "致命"), value: viewModel.authFiles.filter { $0.isFatalDisabled }.count, color: Color.semanticDanger, filter: .fatalDisabled)
+            anomalyChip(title: "quota.status.network.short".localized(fallback: "网络"), value: viewModel.authFiles.filter { $0.isNetworkError }.count, color: Color.semanticInfo, filter: .networkError)
+            Spacer()
+            Button("logs.all".localized(fallback: "查看全部")) {
+                accountStatusFilter = .all
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+        }
+    }
+
+    private func anomalyChip(title: String, value: Int, color: Color, filter: AccountStatusFilter) -> some View {
+        Button {
+            accountStatusFilter = filter
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: filter.icon)
+                Text(title)
+                Text("\(value)")
+                    .fontWeight(.semibold)
+            }
+            .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(color.opacity(0.12))
+            .foregroundStyle(value > 0 ? color : .secondary)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(value)")
+    }
     
     // MARK: - Health Dashboard
     
     @State private var isRefreshingAll = false
+    @State private var isRunningBulkAction = false
     
     private var healthDashboard: some View {
         let stats = healthStats
@@ -348,7 +510,7 @@ struct QuotaScreen: View {
                             .stroke(Color.primary.opacity(0.1), lineWidth: 3)
                         Circle()
                             .trim(from: 0, to: Double(score) / 100)
-                            .stroke(healthScoreColor(score), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .stroke(healthScoreTint(score), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                     }
                     .frame(width: 24, height: 24)
@@ -356,7 +518,7 @@ struct QuotaScreen: View {
                     Text("\(score)%")
                         .font(.title3)
                         .fontWeight(.bold)
-                        .foregroundStyle(healthScoreColor(score))
+                        .foregroundStyle(healthScoreTint(score))
                 }
                 Text("quota.health.score".localized(fallback: "健康度"))
                     .font(.caption)
@@ -372,19 +534,19 @@ struct QuotaScreen: View {
                 statItem(
                     value: stats.ready,
                     label: "quota.health.ready".localized(fallback: "可用"),
-                    color: .green
+                    color: Color.semanticSuccess
                 )
                 
                 statItem(
                     value: stats.cooling,
                     label: "quota.health.cooling".localized(fallback: "冷却中"),
-                    color: .orange
+                    color: Color.semanticWarning
                 )
                 
                 statItem(
                     value: stats.error,
                     label: "quota.health.error".localized(fallback: "错误"),
-                    color: .red
+                    color: Color.semanticDanger
                 )
                 
                 statItem(
@@ -398,6 +560,13 @@ struct QuotaScreen: View {
             
             // Sort & Batch Actions
             HStack(spacing: 8) {
+                if featureFlags.enhancedUILayout {
+                    Toggle("quota.prioritizeAnomalies".localized(fallback: "异常优先"), isOn: $prioritizeAnomalies)
+                        .toggleStyle(.switch)
+                        .font(.caption)
+                        .help("quota.prioritizeAnomalies.help".localized(fallback: "优先展示异常 Provider"))
+                }
+
                 // Sort Menu
                 Menu {
                     ForEach(AccountSortOption.allCases) { option in
@@ -427,13 +596,113 @@ struct QuotaScreen: View {
                     .clipShape(Capsule())
                 }
                 .menuStyle(.borderlessButton)
+
+                if featureFlags.enhancedUILayout {
+                    Menu {
+                        ForEach(AccountStatusFilter.allCases) { option in
+                            Button {
+                                accountStatusFilter = option
+                            } label: {
+                                HStack {
+                                    Image(systemName: option.icon)
+                                    Text(option.label)
+                                    if accountStatusFilter == option {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: accountStatusFilter.icon)
+                                .font(.caption)
+                            Text(accountStatusFilter.label)
+                                .font(.caption)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.1))
+                        .foregroundStyle(.secondary)
+                        .clipShape(Capsule())
+                    }
+                    .menuStyle(.borderlessButton)
+                }
+
+                Picker("providers.viewMode".localized(fallback: "视图模式"), selection: $compactAccountView) {
+                    Text("quota.view.card".localized(fallback: "卡片")).tag(false)
+                    Text("quota.view.compact".localized(fallback: "紧凑")).tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 120)
+
+                Menu {
+                    Button("quota.bulk.disableAbnormal".localized(fallback: "批量禁用异常账号")) {
+                        Task { await bulkDisableAbnormalAccounts() }
+                    }
+                    .disabled(isRunningBulkAction)
+
+                    Button("quota.bulk.enableDisabled".localized(fallback: "批量启用已禁用账号")) {
+                        Task { await bulkEnableDisabledAccounts() }
+                    }
+                    .disabled(isRunningBulkAction)
+
+                    Button("quota.bulk.refreshCurrentProvider".localized(fallback: "批量刷新当前 Provider")) {
+                        Task {
+                            isRunningBulkAction = true
+                            await viewModel.refreshQuotasUnified()
+                            isRunningBulkAction = false
+                        }
+                    }
+                    .disabled(isRunningBulkAction)
+                } label: {
+                    HStack(spacing: 4) {
+                        if isRunningBulkAction {
+                            ProgressView()
+                                .scaleEffect(0.65)
+                                .frame(width: 10, height: 10)
+                        } else {
+                            Image(systemName: "checklist")
+                                .font(.caption)
+                        }
+                        Text("quota.bulk.actions".localized(fallback: "批量操作"))
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.semanticWarningFill)
+                    .foregroundStyle(Color.semanticWarning)
+                    .clipShape(Capsule())
+                }
+                .menuStyle(.borderlessButton)
+
+                Button {
+                    viewModel.currentPage = .providers
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.2")
+                            .font(.caption)
+                        Text("quota.manageAccounts".localized(fallback: "管理账号"))
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.12))
+                    .foregroundStyle(.secondary)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
                 
                 // Refresh All Button
                 Button {
                     Task {
+                        uiMetrics.begin("quota.refresh_all")
                         isRefreshingAll = true
                         await viewModel.refreshQuotasUnified()
                         isRefreshingAll = false
+                        uiMetrics.end(
+                            "quota.refresh_all",
+                            metadata: "providers=\(availableProviders.count)"
+                        )
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -450,8 +719,8 @@ struct QuotaScreen: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.blue.opacity(0.1))
-                    .foregroundStyle(.blue)
+                    .background(Color.semanticSelectionFill)
+                    .foregroundStyle(Color.semanticInfo)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -465,10 +734,45 @@ struct QuotaScreen: View {
         )
     }
     
-    private func healthScoreColor(_ score: Int) -> Color {
-        if score >= 80 { return .green }
-        if score >= 50 { return .orange }
-        return .red
+    private func healthScoreTint(_ score: Int) -> Color {
+        if score >= 80 { return Color.semanticSuccess }
+        if score >= 50 { return Color.semanticWarning }
+        return Color.semanticDanger
+    }
+
+    private var currentProvider: AIProvider? {
+        selectedProvider ?? availableProviders.first
+    }
+
+    private var currentProviderAuthFiles: [AuthFile] {
+        guard let provider = currentProvider else { return [] }
+        return viewModel.authFiles.filter { $0.providerType == provider }
+    }
+
+    private func bulkDisableAbnormalAccounts() async {
+        guard !isRunningBulkAction else { return }
+        isRunningBulkAction = true
+        defer { isRunningBulkAction = false }
+
+        let targets = currentProviderAuthFiles.filter { file in
+            !file.disabled && (file.status == "error" || file.status == "cooling")
+        }
+        for file in targets {
+            await viewModel.toggleAuthFileDisabled(file)
+        }
+        await viewModel.refreshQuotasUnified()
+    }
+
+    private func bulkEnableDisabledAccounts() async {
+        guard !isRunningBulkAction else { return }
+        isRunningBulkAction = true
+        defer { isRunningBulkAction = false }
+
+        let targets = currentProviderAuthFiles.filter { $0.disabled }
+        for file in targets {
+            await viewModel.toggleAuthFileDisabled(file)
+        }
+        await viewModel.refreshQuotasUnified()
     }
     
     private func statItem(value: Int, label: String, color: Color) -> some View {
@@ -496,7 +800,7 @@ struct QuotaScreen: View {
                         accountCount: accountCount(for: provider),
                         isSelected: selectedProvider == provider
                     ) {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withMotionAwareAnimation(.easeOut(duration: 0.2), reduceMotion: reduceMotion) {
                             selectedProvider = provider
                         }
                     }
@@ -512,20 +816,20 @@ struct QuotaScreen: View {
 fileprivate struct QuotaDisplayHelper {
     let displayMode: QuotaDisplayMode
     
-    func statusColor(remainingPercent: Double) -> Color {
+    func statusTint(remainingPercent: Double) -> Color {
         let clamped = max(0, min(100, remainingPercent))
         let usedPercent = 100 - clamped
         let checkValue = displayMode == .used ? usedPercent : clamped
         
         if displayMode == .used {
-            if checkValue < 70 { return .green }
-            if checkValue < 90 { return .yellow }
-            return .red
+            if checkValue < 70 { return Color.semanticSuccess }
+            if checkValue < 90 { return Color.semanticWarning }
+            return Color.semanticDanger
         }
         
-        if checkValue > 50 { return .green }
-        if checkValue > 20 { return .orange }
-        return .red
+        if checkValue > 50 { return Color.semanticSuccess }
+        if checkValue > 20 { return Color.semanticWarning }
+        return Color.semanticDanger
     }
     
     func displayPercent(remainingPercent: Double) -> Double {
@@ -544,13 +848,14 @@ private struct ProviderSegmentButton: View {
     let action: () -> Void
 
     private var settings: MenuBarSettingsManager { MenuBarSettingsManager.shared }
+
     private var displayHelper: QuotaDisplayHelper {
         QuotaDisplayHelper(displayMode: settings.quotaDisplayMode)
     }
     
     private var statusColor: Color {
         guard let percent = quotaPercent else { return .secondary }
-        return displayHelper.statusColor(remainingPercent: percent)
+        return displayHelper.statusTint(remainingPercent: percent)
     }
     
     private var remainingPercent: Double {
@@ -608,7 +913,7 @@ private struct ProviderSegmentButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.15), value: isSelected)
+        .motionAwareAnimation(.easeOut(duration: 0.15), value: isSelected)
     }
 }
 
@@ -619,9 +924,9 @@ private struct QuotaStatusDot: View {
     let size: CGFloat
     
     private var color: Color {
-        if usedPercent < 70 { return .green }   // <70% used = healthy
-        if usedPercent < 90 { return .yellow }  // 70-90% used = warning
-        return .red                              // >90% used = critical
+        if usedPercent < 70 { return Color.semanticSuccess }   // <70% used = healthy
+        if usedPercent < 90 { return Color.semanticWarning }  // 70-90% used = warning
+        return Color.semanticDanger                             // >90% used = critical
     }
     
     var body: some View {
@@ -641,8 +946,37 @@ private struct ProviderQuotaView: View {
     let isLoading: Bool
     var searchFilter: String = ""
     var sortOption: AccountSortOption = .name
+    var statusFilter: AccountStatusFilter = .all
+    var compactMode: Bool = false
     
     private var settings: MenuBarSettingsManager { MenuBarSettingsManager.shared }
+
+    private func codexDerivedLookupKeys(from fileName: String) -> [String] {
+        guard fileName.hasPrefix("codex-"), fileName.hasSuffix(".json") else {
+            return []
+        }
+        var keys: [String] = []
+        let stripped = fileName
+            .replacingOccurrences(of: "codex-", with: "")
+            .replacingOccurrences(of: ".json", with: "")
+        if !stripped.isEmpty {
+            keys.append(stripped)
+            if stripped.hasSuffix("-team") {
+                keys.append(String(stripped.dropLast("-team".count)))
+            }
+            if let atIndex = stripped.firstIndex(of: "@"),
+               let hyphenBeforeAt = stripped[..<atIndex].lastIndex(of: "-") {
+                let emailCandidate = String(stripped[stripped.index(after: hyphenBeforeAt)...])
+                if !emailCandidate.isEmpty {
+                    keys.append(emailCandidate)
+                    if emailCandidate.hasSuffix("-team") {
+                        keys.append(String(emailCandidate.dropLast("-team".count)))
+                    }
+                }
+            }
+        }
+        return Array(Set(keys))
+    }
     
     /// Get all accounts (from auth files or quota data keys)
     private var allAccounts: [AccountInfo] {
@@ -661,7 +995,7 @@ private struct ProviderQuotaView: View {
             seenDisplayNames.insert(normalizedName)
             
             // Try to find quota data with various possible keys
-            let possibleKeys = [key, cleanName, rawEmail, file.name]
+            let possibleKeys = [key, cleanName, rawEmail, file.name] + codexDerivedLookupKeys(from: file.name)
             let matchedQuota = possibleKeys.compactMap { quotaData[$0] }.first
             let matchedSubscription = possibleKeys.compactMap { subscriptionInfos[$0] }.first
             
@@ -693,7 +1027,7 @@ private struct ProviderQuotaView: View {
                 displayName: cleanName,
                 isTeamAccount: isTeam,
                 status: "active",
-                statusColor: .green,
+                statusColor: Color.semanticSuccess,
                 authFile: nil,
                 quotaData: data,
                 subscriptionInfo: subscriptionInfos[key]
@@ -708,6 +1042,12 @@ private struct ProviderQuotaView: View {
                 account.displayName.lowercased().contains(query) ||
                 account.email.lowercased().contains(query) ||
                 account.key.lowercased().contains(query)
+            }
+        }
+
+        if statusFilter != .all {
+            filtered = filtered.filter { account in
+                matchesStatusFilter(account: account)
             }
         }
         
@@ -752,6 +1092,147 @@ private struct ProviderQuotaView: View {
         let total = settings.totalUsagePercent(models: models)
         return total >= 0 ? total : 100
     }
+
+    private func matchesStatusFilter(account: AccountInfo) -> Bool {
+        if provider == .codex {
+            let bucket = codexBucket(for: account)
+            switch statusFilter {
+            case .all:
+                return true
+            case .ready:
+                return bucket == .main
+            case .cooling:
+                return bucket == .quota5h || bucket == .quota7d
+            case .error:
+                return bucket == .tokenInvalidated
+            case .disabled:
+                return account.authFile?.disabled == true
+            case .quota5h:
+                return bucket == .quota5h
+            case .quota7d:
+                return bucket == .quota7d
+            case .fatalDisabled:
+                return account.authFile?.isFatalDisabled == true
+            case .networkError:
+                return account.authFile?.isNetworkError == true
+            }
+        }
+
+        switch statusFilter {
+        case .all:
+            return true
+        case .ready:
+            return account.status == "ready" || account.status == "active"
+        case .cooling:
+            return account.status == "cooling"
+        case .error:
+            return account.status == "error"
+        case .disabled:
+            return account.authFile?.disabled == true
+        case .quota5h:
+            return account.authFile?.isQuotaLimited5h == true
+        case .quota7d:
+            return account.authFile?.isQuotaLimited7d == true
+        case .fatalDisabled:
+            return account.authFile?.isFatalDisabled == true
+        case .networkError:
+            return account.authFile?.isNetworkError == true
+        }
+    }
+
+    private func codexBucket(for account: AccountInfo) -> CodexRoutingBucket {
+        if account.authFile?.isQuotaLimited7d == true {
+            return .quota7d
+        }
+        if account.authFile?.isQuotaLimited5h == true {
+            return .quota5h
+        }
+        let statusText = account.status.lowercased()
+        let statusMessage = account.authFile?.statusMessage?.lowercased() ?? ""
+        if statusText == "error" ||
+            statusText == "invalid" ||
+            statusMessage.contains("invalid") ||
+            statusMessage.contains("unauthorized") ||
+            statusMessage.contains("token") {
+            return .tokenInvalidated
+        }
+
+        let sessionRemaining = codexRemainingPercent(for: account, modelName: "codex-session")
+        let weeklyRemaining = codexRemainingPercent(for: account, modelName: "codex-weekly")
+
+        if weeklyRemaining <= 0.1 {
+            return .quota7d
+        }
+        if sessionRemaining <= 0.1 {
+            return .quota5h
+        }
+        return .main
+    }
+
+    private func codexRemainingPercent(for account: AccountInfo, modelName: String) -> Double {
+        account.quotaData?.models.first(where: { $0.name == modelName })?.percentage ?? 100
+    }
+
+    private func codexResetDate(for account: AccountInfo, modelName: String) -> Date? {
+        guard let resetString = account.quotaData?.models.first(where: { $0.name == modelName })?.resetTime,
+              !resetString.isEmpty else {
+            return nil
+        }
+        let formatterWithFractional = ISO8601DateFormatter()
+        formatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let formatterDefault = ISO8601DateFormatter()
+        formatterDefault.formatOptions = [.withInternetDateTime]
+        return formatterWithFractional.date(from: resetString) ?? formatterDefault.date(from: resetString)
+    }
+
+    private func codexSorted(_ accounts: [AccountInfo], in bucket: CodexRoutingBucket) -> [AccountInfo] {
+        accounts.sorted { lhs, rhs in
+            switch sortOption {
+            case .name:
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            case .quotaLow:
+                let lhsQuota = getLowestQuotaPercent(for: lhs)
+                let rhsQuota = getLowestQuotaPercent(for: rhs)
+                if lhsQuota != rhsQuota { return lhsQuota < rhsQuota }
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            case .quotaHigh:
+                let lhsQuota = getLowestQuotaPercent(for: lhs)
+                let rhsQuota = getLowestQuotaPercent(for: rhs)
+                if lhsQuota != rhsQuota { return lhsQuota > rhsQuota }
+                return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+            case .status:
+                break
+            }
+
+            switch bucket {
+            case .main:
+                let lhsWeekly = codexRemainingPercent(for: lhs, modelName: "codex-weekly")
+                let rhsWeekly = codexRemainingPercent(for: rhs, modelName: "codex-weekly")
+                if lhsWeekly != rhsWeekly { return lhsWeekly > rhsWeekly }
+
+                let lhsSession = codexRemainingPercent(for: lhs, modelName: "codex-session")
+                let rhsSession = codexRemainingPercent(for: rhs, modelName: "codex-session")
+                if lhsSession != rhsSession { return lhsSession > rhsSession }
+
+            case .quota5h:
+                let lhsReset = codexResetDate(for: lhs, modelName: "codex-session") ?? .distantFuture
+                let rhsReset = codexResetDate(for: rhs, modelName: "codex-session") ?? .distantFuture
+                if lhsReset != rhsReset { return lhsReset < rhsReset }
+
+            case .quota7d:
+                let lhsReset = codexResetDate(for: lhs, modelName: "codex-weekly") ?? .distantFuture
+                let rhsReset = codexResetDate(for: rhs, modelName: "codex-weekly") ?? .distantFuture
+                if lhsReset != rhsReset { return lhsReset < rhsReset }
+
+            case .tokenInvalidated:
+                let lhsStatus = lhs.authFile?.statusMessage ?? lhs.status
+                let rhsStatus = rhs.authFile?.statusMessage ?? rhs.status
+                if lhsStatus != rhsStatus { return lhsStatus < rhsStatus }
+            }
+
+            return lhs.displayName.lowercased() < rhs.displayName.lowercased()
+        }
+    }
     
     /// Group accounts by status for organized display
     private var accountsByStatus: [(status: String, label: String, color: Color, accounts: [AccountInfo])] {
@@ -778,19 +1259,40 @@ private struct ProviderQuotaView: View {
         var groups: [(status: String, label: String, color: Color, accounts: [AccountInfo])] = []
         
         if !ready.isEmpty {
-            groups.append(("ready", "quota.status.ready".localized(fallback: "可用"), .green, ready))
+            groups.append(("ready", "quota.status.ready".localized(fallback: "可用"), Color.semanticSuccess, ready))
         }
         if !cooling.isEmpty {
-            groups.append(("cooling", "quota.status.cooling".localized(fallback: "冷却中"), .orange, cooling))
+            groups.append(("cooling", "quota.status.cooling".localized(fallback: "冷却中"), Color.semanticWarning, cooling))
         }
         if !error.isEmpty {
-            groups.append(("error", "quota.status.error".localized(fallback: "错误"), .red, error))
+            groups.append(("error", "quota.status.error".localized(fallback: "错误"), Color.semanticDanger, error))
         }
         if !other.isEmpty {
             groups.append(("other", "quota.status.other".localized(fallback: "其他"), .secondary, other))
         }
         
         return groups
+    }
+
+    private var codexAccountsByBucket: [(bucket: CodexRoutingBucket, accounts: [AccountInfo])] {
+        let accounts = allAccounts
+        var grouped: [CodexRoutingBucket: [AccountInfo]] = [
+            .main: [],
+            .tokenInvalidated: [],
+            .quota5h: [],
+            .quota7d: []
+        ]
+
+        for account in accounts {
+            grouped[codexBucket(for: account), default: []].append(account)
+        }
+
+        let orderedBuckets: [CodexRoutingBucket] = [.main, .tokenInvalidated, .quota5h, .quota7d]
+        return orderedBuckets.compactMap { bucket in
+            let list = grouped[bucket] ?? []
+            guard !list.isEmpty else { return nil }
+            return (bucket, codexSorted(list, in: bucket))
+        }
     }
     
     var body: some View {
@@ -799,14 +1301,33 @@ private struct ProviderQuotaView: View {
                 QuotaLoadingView()
             } else if allAccounts.isEmpty {
                 emptyState
+            } else if provider == .codex {
+                ForEach(codexAccountsByBucket, id: \.bucket.rawValue) { group in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(group.bucket.color)
+                                .frame(width: 8, height: 8)
+                            Text(group.bucket.label)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Text("(\(group.accounts.count))")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                        }
+                        .padding(.top, group.bucket == .main ? 0 : 8)
+
+                        ForEach(group.accounts, id: \.key) { account in
+                            accountView(account)
+                        }
+                    }
+                }
             } else if allAccounts.count <= 3 {
                 // For small number of accounts, show flat list
                 ForEach(allAccounts, id: \.key) { account in
-                    AccountQuotaCardV2(
-                        provider: provider,
-                        account: account,
-                        isLoading: isLoading && account.quotaData == nil
-                    )
+                    accountView(account)
                 }
             } else {
                 // For larger number of accounts, group by status
@@ -830,15 +1351,24 @@ private struct ProviderQuotaView: View {
                         
                         // Account cards
                         ForEach(group.accounts, id: \.key) { account in
-                            AccountQuotaCardV2(
-                                provider: provider,
-                                account: account,
-                                isLoading: isLoading && account.quotaData == nil
-                            )
+                            accountView(account)
                         }
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func accountView(_ account: AccountInfo) -> some View {
+        if compactMode {
+            CompactAccountQuotaRow(provider: provider, account: account)
+        } else {
+            AccountQuotaCardV2(
+                provider: provider,
+                account: account,
+                isLoading: isLoading && account.quotaData == nil
+            )
         }
     }
     
@@ -857,6 +1387,67 @@ private struct ProviderQuotaView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.primary.opacity(0.03))
         )
+    }
+}
+
+private struct CompactAccountQuotaRow: View {
+    let provider: AIProvider
+    let account: AccountInfo
+
+    private var lowestQuotaPercent: Double {
+        guard let quota = account.quotaData else { return -1 }
+        let models = quota.models.map { (name: $0.name, percentage: $0.percentage) }
+        return MenuBarSettingsManager.shared.totalUsagePercent(models: models)
+    }
+
+    private var quotaText: String {
+        if lowestQuotaPercent < 0 {
+            return "—"
+        }
+        return "\(Int(lowestQuotaPercent))%"
+    }
+
+    private var quotaColor: Color {
+        switch lowestQuotaPercent {
+        case ..<0:
+            return .secondary
+        case ..<10:
+            return Color.semanticDanger
+        case ..<30:
+            return Color.semanticWarning
+        case ..<50:
+            return Color.semanticWarning
+        default:
+            return Color.semanticSuccess
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderIcon(provider: provider, size: 14)
+
+            Text(account.displayName)
+                .font(.subheadline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer()
+
+            if let status = account.authFile?.status {
+                Text(status.localizedCapitalized)
+                    .font(.caption2)
+                    .foregroundStyle(account.statusColor)
+            }
+
+            Text(quotaText)
+                .font(.system(.caption, design: .monospaced, weight: .semibold))
+                .foregroundStyle(quotaColor)
+                .frame(width: 44, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1020,6 +1611,9 @@ private struct AccountQuotaCardV2: View {
                 Text(message)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+            } else {
+                // No quota data available - show helpful prompt
+                noQuotaDataView
             }
         }
         .padding(16)
@@ -1031,6 +1625,30 @@ private struct AccountQuotaCardV2: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+    
+    /// View shown when no quota data is available
+    private var noQuotaDataView: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+                Text("quota.noDataYet".localized(fallback: "尚未获取额度数据"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Text("quota.clickRefresh".localized(fallback: "点击刷新按钮获取最新额度"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
         )
     }
     
@@ -1053,13 +1671,13 @@ private struct AccountQuotaCardV2: View {
                     
                     // Team badge
                     if account.isTeamAccount {
-                        Text("Team")
+                        Text("quota.account.team".localized(fallback: "Team"))
                             .font(.caption2)
                             .fontWeight(.medium)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.purple)
+                            .background(Color.semanticInfo)
                             .clipShape(Capsule())
                     }
                 }
@@ -1080,6 +1698,24 @@ private struct AccountQuotaCardV2: View {
                         .font(.caption)
                         .foregroundStyle(account.statusColor)
                 }
+
+                if let kind = account.authFile?.normalizedErrorKind {
+                    Text("quota.errorKind".localized(fallback: "error_kind") + ": \(kind)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let frozenUntil = account.authFile?.frozenUntilDate, frozenUntil > Date() {
+                    Text("quota.frozenUntil".localized(fallback: "frozen_until") + ": \(frozenUntil.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(Color.semanticWarning)
+                }
+
+                if account.authFile?.isFatalDisabled == true {
+                    Text("quota.disabledByPolicy".localized(fallback: "disabled by policy"))
+                        .font(.caption2)
+                        .foregroundStyle(Color.semanticDanger)
+                }
             }
             
             Spacer()
@@ -1092,7 +1728,7 @@ private struct AccountQuotaCardV2: View {
                         HStack(spacing: 4) {
                             Image(systemName: isWarmupEnabled ? "bolt.fill" : "bolt")
                                 .font(.caption)
-                            Text("Warm Up")
+                            Text("quota.warmup".localized(fallback: "Warm Up"))
                                 .font(.caption)
                                 .fontWeight(.medium)
                         }
@@ -1110,10 +1746,10 @@ private struct AccountQuotaCardV2: View {
                     Text("antigravity.active".localized())
                         .font(.caption2)
                         .fontWeight(.medium)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.semanticSuccess)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.green.opacity(0.1))
+                        .background(Color.semanticSuccess.opacity(0.1))
                         .clipShape(Capsule())
                 }
                 
@@ -1124,14 +1760,14 @@ private struct AccountQuotaCardV2: View {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.right.square")
                                 .font(.caption)
-                            Text("Use in IDE")
+                            Text("quota.useInIDE".localized(fallback: "Use in IDE"))
                                 .font(.caption)
                                 .fontWeight(.medium)
                         }
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(Color.semanticInfo)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
-                            .background(Color.blue.opacity(0.1))
+                            .background(Color.semanticSelectionFill)
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -1154,7 +1790,7 @@ private struct AccountQuotaCardV2: View {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.caption)
-                            Text("Refresh")
+                            Text("action.refresh".localized(fallback: "Refresh"))
                                 .font(.caption)
                                 .fontWeight(.medium)
                         }
@@ -1182,9 +1818,9 @@ private struct AccountQuotaCardV2: View {
                             } else {
                                 Image(systemName: "arrow.clockwise.circle.fill")
                                     .font(.caption)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(Color.semanticWarning)
                                     .frame(width: 28, height: 28)
-                                    .background(Color.orange.opacity(0.1))
+                                    .background(Color.semanticWarning.opacity(0.1))
                                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                             }
                         }
@@ -1194,11 +1830,11 @@ private struct AccountQuotaCardV2: View {
                     } else {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.semanticDanger)
                             .frame(width: 28, height: 28)
-                            .background(Color.red.opacity(0.1))
+                            .background(Color.semanticDanger.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .help("Limit Reached")
+                            .help("limit.reached".localized())
                     }
                 }
             }
@@ -1239,7 +1875,7 @@ private struct AccountQuotaCardV2: View {
         if let data = account.quotaData {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Usage")
+                    Text("quota.usage".localized(fallback: "Usage"))
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(.tertiary)
@@ -1359,22 +1995,22 @@ private struct PlanBadgeV2Compact: View {
         
         // Check for Pro variants
         if lowercased.contains("pro") {
-            return ("Pro", .purple)
+            return ("Pro", Color.semanticAccentSecondary)
         }
         
         // Check for Plus
         if lowercased.contains("plus") {
-            return ("Plus", .blue)
+            return ("Plus", Color.semanticInfo)
         }
         
         // Check for Team
         if lowercased.contains("team") {
-            return ("Team", .orange)
+            return ("Team", Color.semanticWarning)
         }
         
         // Check for Enterprise
         if lowercased.contains("enterprise") {
-            return ("Enterprise", .red)
+            return ("Enterprise", Color.semanticDanger)
         }
         
         // Free/Standard
@@ -1413,22 +2049,22 @@ private struct PlanBadgeV2: View {
         
         // Handle compound names like "Pro Student"
         if lowercased.contains("pro") && lowercased.contains("student") {
-            return (.purple, "graduationcap.fill")
+            return (Color.semanticAccentSecondary, "graduationcap.fill")
         }
         
         switch lowercased {
         case "pro":
-            return (.purple, "crown.fill")
+            return (Color.semanticAccentSecondary, "crown.fill")
         case "plus":
-            return (.blue, "plus.circle.fill")
+            return (Color.semanticInfo, "plus.circle.fill")
         case "team":
-            return (.orange, "person.3.fill")
+            return (Color.semanticWarning, "person.3.fill")
         case "enterprise":
-            return (.red, "building.2.fill")
+            return (Color.semanticDanger, "building.2.fill")
         case "free":
             return (.secondary, "person.fill")
         case "student":
-            return (.green, "graduationcap.fill")
+            return (Color.semanticSuccess, "graduationcap.fill")
         default:
             return (.secondary, "person.fill")
         }
@@ -1469,12 +2105,12 @@ private struct SubscriptionBadgeV2: View {
         
         // Check for Ultra tier (highest priority)
         if tierId.contains("ultra") || tierName.contains("ultra") {
-            return ("Ultra", .orange)
+            return ("Ultra", Color.semanticWarning)
         }
         
         // Check for Pro tier
         if tierId.contains("pro") || tierName.contains("pro") {
-            return ("Pro", .purple)
+            return ("Pro", Color.semanticAccentSecondary)
         }
         
         // Check for Free/Standard tier
@@ -1533,7 +2169,7 @@ private struct AntigravityGroupRow: View {
     
     var body: some View {
         let displayPercent = displayHelper.displayPercent(remainingPercent: remainingPercent)
-        let statusColor = displayHelper.statusColor(remainingPercent: remainingPercent)
+        let statusColor = displayHelper.statusTint(remainingPercent: remainingPercent)
         
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -1625,7 +2261,7 @@ private struct AntigravityLowestBarLayout: View {
                         Text(String(format: "%.0f%%", displayPercent(for: lowest.percentage)))
                             .font(.subheadline)
                             .fontWeight(.bold)
-                            .foregroundStyle(displayHelper.statusColor(remainingPercent: lowest.percentage))
+                            .foregroundStyle(displayHelper.statusTint(remainingPercent: lowest.percentage))
                             .monospacedDigit()
                     }
                     
@@ -1634,14 +2270,14 @@ private struct AntigravityLowestBarLayout: View {
                             Capsule()
                                 .fill(Color.primary.opacity(0.06))
                             Capsule()
-                                .fill(displayHelper.statusColor(remainingPercent: lowest.percentage).gradient)
+                                .fill(displayHelper.statusTint(remainingPercent: lowest.percentage).gradient)
                                 .frame(width: proxy.size.width * (displayPercent(for: lowest.percentage) / 100))
                         }
                     }
                     .frame(height: 8)
                 }
                 .padding(10)
-                .background(displayHelper.statusColor(remainingPercent: lowest.percentage).opacity(0.08))
+                .background(displayHelper.statusTint(remainingPercent: lowest.percentage).opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             
@@ -1657,7 +2293,7 @@ private struct AntigravityLowestBarLayout: View {
                             Text(String(format: "%.0f%%", displayPercent(for: group.percentage)))
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundStyle(displayHelper.statusColor(remainingPercent: group.percentage))
+                                .foregroundStyle(displayHelper.statusTint(remainingPercent: group.percentage))
                                 .monospacedDigit()
                         }
                     }
@@ -1694,7 +2330,7 @@ private struct AntigravityRingLayout: View {
                         percent: displayPercent(for: group.percentage),
                         size: 44,
                         lineWidth: 5,
-                        tint: displayHelper.statusColor(remainingPercent: group.percentage),
+                        tint: displayHelper.statusTint(remainingPercent: group.percentage),
                         showLabel: true
                     )
                     
@@ -1747,7 +2383,7 @@ private struct StandardLowestBarLayout: View {
                         Text(String(format: "%.0f%%", displayPercent(for: lowest.percentage)))
                             .font(.subheadline)
                             .fontWeight(.bold)
-                            .foregroundStyle(displayHelper.statusColor(remainingPercent: lowest.percentage))
+                            .foregroundStyle(displayHelper.statusTint(remainingPercent: lowest.percentage))
                             .monospacedDigit()
                     }
                     
@@ -1756,7 +2392,7 @@ private struct StandardLowestBarLayout: View {
                             Capsule()
                                 .fill(Color.primary.opacity(0.06))
                             Capsule()
-                                .fill(displayHelper.statusColor(remainingPercent: lowest.percentage).gradient)
+                                .fill(displayHelper.statusTint(remainingPercent: lowest.percentage).gradient)
                                 .frame(width: proxy.size.width * (displayPercent(for: lowest.percentage) / 100))
                         }
                     }
@@ -1769,7 +2405,7 @@ private struct StandardLowestBarLayout: View {
                     }
                 }
                 .padding(10)
-                .background(displayHelper.statusColor(remainingPercent: lowest.percentage).opacity(0.08))
+                .background(displayHelper.statusTint(remainingPercent: lowest.percentage).opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             
@@ -1790,7 +2426,7 @@ private struct StandardLowestBarLayout: View {
                             Text(String(format: "%.0f%%", displayPercent(for: model.percentage)))
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundStyle(displayHelper.statusColor(remainingPercent: model.percentage))
+                                .foregroundStyle(displayHelper.statusTint(remainingPercent: model.percentage))
                                 .monospacedDigit()
                         }
                     }
@@ -1827,7 +2463,7 @@ private struct StandardRingLayout: View {
                         percent: displayPercent(for: model.percentage),
                         size: 44,
                         lineWidth: 5,
-                        tint: displayHelper.statusColor(remainingPercent: model.percentage),
+                        tint: displayHelper.statusTint(remainingPercent: model.percentage),
                         showLabel: true
                     )
                     
@@ -1932,7 +2568,7 @@ private struct ModelDetailCard: View {
     
     var body: some View {
         let displayPercent = displayHelper.displayPercent(remainingPercent: remainingPercent)
-        let statusColor = displayHelper.statusColor(remainingPercent: remainingPercent)
+        let statusColor = displayHelper.statusTint(remainingPercent: remainingPercent)
         
         VStack(alignment: .leading, spacing: 8) {
             // Model name (raw name)
@@ -2009,7 +2645,7 @@ private struct UsageRowV2: View {
     
     var body: some View {
         let displayPercent = displayHelper.displayPercent(remainingPercent: remainingPercent)
-        let statusColor = displayHelper.statusColor(remainingPercent: remainingPercent)
+        let statusColor = displayHelper.statusTint(remainingPercent: remainingPercent)
         
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -2074,8 +2710,13 @@ private struct UsageRowV2: View {
 // MARK: - Loading View
 
 private struct QuotaLoadingView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAnimating = false
     
+    private var skeletonOpacity: Double {
+        reduceMotion ? 1.0 : (isAnimating ? 0.4 : 1.0)
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             ForEach(0..<2, id: \.self) { _ in
@@ -2095,9 +2736,12 @@ private struct QuotaLoadingView: View {
                 }
             }
         }
-        .opacity(isAnimating ? 0.4 : 1)
-        .animation(.easeOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
-        .onAppear { isAnimating = true }
+        .opacity(skeletonOpacity)
+        .motionAwareAnimation(.easeOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
+        .onAppear { isAnimating = !reduceMotion }
+        .onChange(of: reduceMotion) { _, newValue in
+            isAnimating = !newValue
+        }
     }
 }
 

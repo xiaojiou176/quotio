@@ -73,7 +73,7 @@ struct AgentCard: View {
             }
         }
         .padding(16)
-        .background(Color(.controlBackgroundColor))
+        .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
