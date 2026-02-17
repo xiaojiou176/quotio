@@ -30,6 +30,8 @@ final class QuotioTests: XCTestCase {
     func testSSEEventDedupeKeyPrefersRequestID() {
         let event = SSERequestEvent(
             type: "request",
+            seq: nil,
+            eventId: nil,
             timestamp: "2026-02-16T00:00:00Z",
             requestId: "req-123",
             provider: "openai",
@@ -47,6 +49,8 @@ final class QuotioTests: XCTestCase {
     func testSSEEventDedupeKeyFallbackIsStableForSamePayload() {
         let eventA = SSERequestEvent(
             type: "request",
+            seq: nil,
+            eventId: nil,
             timestamp: "2026-02-16T00:00:00Z",
             requestId: nil,
             provider: "openai",
@@ -60,6 +64,8 @@ final class QuotioTests: XCTestCase {
         )
         let eventB = SSERequestEvent(
             type: "request",
+            seq: nil,
+            eventId: nil,
             timestamp: "2026-02-16T00:00:00Z",
             requestId: nil,
             provider: "openai",
