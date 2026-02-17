@@ -479,6 +479,12 @@ struct ContentView: View {
                             }
                             .tag(NavigationPage.fallback)
 
+                            HStack(spacing: 6) {
+                                Label("nav.reviewQueue".localized(fallback: "Review Queue"), systemImage: "checklist")
+                                ExperimentalBadge()
+                            }
+                            .tag(NavigationPage.reviewQueue)
+
                             if modeManager.currentMode.supportsAgentConfig {
                                 Label("nav.agents".localized(), systemImage: "terminal")
                                     .tag(NavigationPage.agents)
@@ -580,6 +586,8 @@ struct ContentView: View {
                 ProvidersScreen()
             case .fallback:
                 FallbackScreen()
+            case .reviewQueue:
+                ReviewQueueScreen()
             case .agents:
                 AgentSetupScreen()
             case .apiKeys:

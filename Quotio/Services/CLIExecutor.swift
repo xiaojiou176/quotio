@@ -269,6 +269,7 @@ actor CLIExecutor {
         name: String,
         arguments: [String] = [],
         input: String,
+        workingDirectory: String? = nil,
         timeout: TimeInterval = 30
     ) async -> CLIExecutionResult {
         guard let binaryPath = findBinary(named: name) else {
@@ -290,6 +291,9 @@ actor CLIExecutor {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         process.standardInput = inputPipe
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        }
         
         do {
             try process.run()

@@ -125,7 +125,7 @@ enum OperatingMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .monitor:
             return [.dashboard, .quota, .providers, .settings, .about]
         case .localProxy:
-            return [.dashboard, .quota, .providers, .agents, .apiKeys, .logs, .settings, .about]
+            return [.dashboard, .quota, .providers, .reviewQueue, .agents, .apiKeys, .logs, .settings, .about]
         case .remoteProxy:
             return [.dashboard, .quota, .providers, .apiKeys, .settings, .about]
         }

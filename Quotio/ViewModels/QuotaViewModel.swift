@@ -89,6 +89,16 @@ final class QuotaViewModel {
         _agentSetupViewModel = vm
         return vm
     }
+
+    @ObservationIgnored private var _reviewQueueViewModel: ReviewQueueViewModel?
+    var reviewQueueViewModel: ReviewQueueViewModel {
+        if let vm = _reviewQueueViewModel {
+            return vm
+        }
+        let vm = ReviewQueueViewModel()
+        _reviewQueueViewModel = vm
+        return vm
+    }
     
     /// Quota data per provider per account (email -> QuotaData)
     var providerQuotas: [AIProvider: [String: ProviderQuotaData]] = [:]
