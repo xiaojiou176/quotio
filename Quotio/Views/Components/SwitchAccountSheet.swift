@@ -25,7 +25,7 @@ struct SwitchAccountSheet: View {
     }
     
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
             // Header
             headerView
             
@@ -130,7 +130,7 @@ struct SwitchAccountSheet: View {
         let isComplete = stepOrder(step) < stepOrder(current)
         let isCurrent = step == current
         
-        return HStack(spacing: 10) {
+        return HStack(spacing: 12) {
             if isComplete {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color.semanticSuccess)
@@ -211,6 +211,7 @@ struct SwitchAccountSheet: View {
                     onDismiss()
                 }
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
                 
                 Spacer()
                 
@@ -220,6 +221,7 @@ struct SwitchAccountSheet: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
             }
             
         case .switching:
@@ -232,6 +234,7 @@ struct SwitchAccountSheet: View {
                 onDismiss()
             }
             .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
             .frame(maxWidth: .infinity)
             
         case .failed:
@@ -241,6 +244,7 @@ struct SwitchAccountSheet: View {
                     onDismiss()
                 }
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
                 
                 Spacer()
                 
@@ -250,6 +254,7 @@ struct SwitchAccountSheet: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
             }
         }
     }

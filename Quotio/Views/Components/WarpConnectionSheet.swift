@@ -26,7 +26,7 @@ struct WarpConnectionSheet: View {
             
             Divider()
             
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("customProviders.providerName".localized())
                         .font(.subheadline)
@@ -99,7 +99,7 @@ struct WarpConnectionSheet: View {
             
             Spacer()
         }
-        .padding(20)
+        .padding(24)
     }
     
     private var footerView: some View {
@@ -107,6 +107,7 @@ struct WarpConnectionSheet: View {
             Button("action.cancel".localized()) {
                 dismiss()
             }
+            .keyboardShortcut(.cancelAction)
             
             Spacer()
             
@@ -116,7 +117,8 @@ struct WarpConnectionSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(name.isEmpty || tokenString.isEmpty)
+            .keyboardShortcut(.defaultAction)
         }
-        .padding(20)
+        .padding(24)
     }
 }

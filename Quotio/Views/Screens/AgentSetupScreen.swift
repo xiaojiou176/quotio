@@ -118,7 +118,7 @@ struct AgentSetupScreen: View {
     
     private var agentListView: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 24) {
                 headerSection
                 
                 if !installedAgents.isEmpty {
@@ -129,7 +129,7 @@ struct AgentSetupScreen: View {
                     notInstalledSection
                 }
             }
-            .padding(20)
+            .padding(24)
         }
     }
     
@@ -239,7 +239,7 @@ private struct NotInstalledAgentCard: View {
                 .help("agents.viewDocs".localized())
             }
         }
-        .padding(10)
+        .padding(12)
         .background(Color.secondary.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }

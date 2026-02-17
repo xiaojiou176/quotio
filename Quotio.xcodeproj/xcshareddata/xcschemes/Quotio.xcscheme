@@ -21,6 +21,34 @@
                ReferencedContainer = "container:Quotio.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E041E5E5CF278AD1745FFE4E"
+               BuildableName = "QuotioTests.xctest"
+               BlueprintName = "QuotioTests"
+               ReferencedContainer = "container:Quotio.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E9A8B7C6D5F4031223344556"
+               BuildableName = "QuotioUITests.xctest"
+               BlueprintName = "QuotioUITests"
+               ReferencedContainer = "container:Quotio.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -29,6 +57,35 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
+      <BuildableReference
+         BuildableIdentifier = "primary"
+         BlueprintIdentifier = "78D386932EFBF30400C40FB6"
+         BuildableName = "Quotio.app"
+         BlueprintName = "Quotio"
+         ReferencedContainer = "container:Quotio.xcodeproj">
+      </BuildableReference>
+      <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E041E5E5CF278AD1745FFE4E"
+               BuildableName = "QuotioTests.xctest"
+               BlueprintName = "QuotioTests"
+               ReferencedContainer = "container:Quotio.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E9A8B7C6D5F4031223344556"
+               BuildableName = "QuotioUITests.xctest"
+               BlueprintName = "QuotioUITests"
+               ReferencedContainer = "container:Quotio.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"

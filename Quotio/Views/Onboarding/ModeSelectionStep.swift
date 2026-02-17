@@ -27,7 +27,7 @@ struct ModeSelectionStep: View {
             
             navigationButtons
         }
-        .padding(40)
+        .padding(48)
     }
     
     private var headerSection: some View {
@@ -73,65 +73,63 @@ struct OperatingModeCard: View {
     @State private var isHovered = false
     
     var body: some View {
-        HStack(spacing: 14) {
-            iconView
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(mode.displayName)
-                        .font(.headline)
-                    
-                    if let badge = mode.badge {
-                        Text(badge)
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(badgeColor.opacity(0.15))
-                            .foregroundStyle(badgeColor)
-                            .clipShape(Capsule())
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                iconView
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(mode.displayName)
+                            .font(.headline)
+                        
+                        if let badge = mode.badge {
+                            Text(badge)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(badgeColor.opacity(0.15))
+                                .foregroundStyle(badgeColor)
+                                .clipShape(Capsule())
+                        }
                     }
+                    
+                    Text(mode.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
-                Text(mode.description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Spacer()
+                
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(isSelected ? Color.semanticInfo : .secondary.opacity(0.4))
             }
-            
-            Spacer()
-            
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.title2)
-                .foregroundStyle(isSelected ? Color.semanticInfo : .secondary.opacity(0.4))
+            .padding(16)
+            .background(backgroundView)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(borderColor, lineWidth: isSelected ? 2 : 1)
+            )
+            .scaleEffect(isHovered ? 1.01 : 1.0)
+            .motionAwareAnimation(.easeInOut(duration: 0.15), value: isHovered)
+            .motionAwareAnimation(.easeInOut(duration: 0.15), value: isSelected)
+            .contentShape(Rectangle())
         }
-        .padding(16)
-        .background(backgroundView)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(borderColor, lineWidth: isSelected ? 2 : 1)
-        )
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .motionAwareAnimation(.easeInOut(duration: 0.15), value: isHovered)
-        .motionAwareAnimation(.easeInOut(duration: 0.15), value: isSelected)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
+        .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            onSelect()
-        }
     }
     
     private var iconView: some View {
         Image(systemName: mode.icon)
             .font(.title2)
-            .foregroundStyle(isSelected ? .white : mode.color)
+            .foregroundStyle(isSelected ? Color.semanticOnAccent : mode.color)
             .frame(width: 44, height: 44)
             .background(isSelected ? mode.color : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(mode.color, lineWidth: isSelected ? 0 : 2)
             )
     }

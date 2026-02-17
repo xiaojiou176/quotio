@@ -56,7 +56,7 @@ struct ProviderAccountsGroup: View {
     // MARK: - Provider Label
     
     private var providerLabel: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             ProviderIcon(provider: group.provider, size: 20)
             
             Text(group.provider.displayName)
@@ -67,7 +67,7 @@ struct ProviderAccountsGroup: View {
                 .font(.caption2)
                 .fontWeight(.semibold)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.vertical, 4)
                 .background(group.provider.color.opacity(0.15))
                 .foregroundStyle(group.provider.color)
                 .clipShape(Capsule())
@@ -165,13 +165,13 @@ struct AllAccountsSection: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             
-            Text("providers.addAccountHint".localized())
+            Text("providers.addAccountHint".localized(fallback: "点击右上角添加账号"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        .padding(.vertical, 24)
     }
 }
 

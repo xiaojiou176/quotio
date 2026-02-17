@@ -237,7 +237,7 @@ extension ButtonStyle where Self == SectionHeaderButtonStyle {
 // MARK: - Preview
 
 #Preview("Button Styles") {
-    VStack(spacing: 20) {
+    VStack(spacing: 24) {
         // Subtle
         HStack {
             Text("Subtle:")
@@ -246,6 +246,7 @@ extension ButtonStyle where Self == SectionHeaderButtonStyle {
                     .padding(8)
             }
             .buttonStyle(.subtle)
+            .accessibilityLabel("action.delete".localized())
         }
         
         // Row Action
@@ -255,11 +256,13 @@ extension ButtonStyle where Self == SectionHeaderButtonStyle {
                 Image(systemName: "pencil")
             }
             .buttonStyle(.rowAction)
+            .accessibilityLabel("action.edit".localized())
             
             Button { } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.rowActionDestructive)
+            .accessibilityLabel("action.delete".localized())
         }
         
         // Menu Row
@@ -298,6 +301,7 @@ extension ButtonStyle where Self == SectionHeaderButtonStyle {
                 Image(systemName: "plus")
             }
             .buttonStyle(.toolbarIcon)
+            .accessibilityLabel("action.add".localized(fallback: "添加"))
         }
         
         // Section Header

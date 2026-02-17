@@ -49,12 +49,25 @@ final class SettingsAuditTrail {
     private(set) var events: [SettingsAuditEvent] = []
     private let fileQueue = DispatchQueue(label: "dev.quotio.desktop.settings-audit-file")
 
-    private var storageURL: URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            fatalError("Application Support directory not found")
+    private static func baseDirectory() -> URL {
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            return appSupport
         }
-        let dir = appSupport.appendingPathComponent("Quotio")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        Log.warning("Application Support directory unavailable, falling back to temporary directory")
+        return FileManager.default.temporaryDirectory
+    }
+
+    private static func auditValue(_ value: String) -> String {
+        value
+    }
+
+    private var storageURL: URL {
+        let dir = Self.baseDirectory().appendingPathComponent("Quotio")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            Log.warning("Failed to create settings audit directory: \(error.localizedDescription)")
+        }
         return dir.appendingPathComponent("settings-audit.json")
     }
 
@@ -63,13 +76,15 @@ final class SettingsAuditTrail {
     }
 
     func recordChange(key: String, oldValue: String, newValue: String, source: String) {
-        guard oldValue != newValue else { return }
-        let event = SettingsAuditEvent(key: key, oldValue: oldValue, newValue: newValue, source: source)
+        let rawOld = Self.auditValue(oldValue)
+        let rawNew = Self.auditValue(newValue)
+        guard rawOld != rawNew else { return }
+        let event = SettingsAuditEvent(key: key, oldValue: rawOld, newValue: rawNew, source: source)
         events.insert(event, at: 0)
         if events.count > SettingsAuditStore.maxEvents {
             events = Array(events.prefix(SettingsAuditStore.maxEvents))
         }
-        NSLog("[SettingsAudit] \(key) \(oldValue) -> \(newValue) source=\(source)")
+        Log.debug("[SettingsAudit] \(key) changed source=\(source)")
         saveToDisk()
     }
 
@@ -99,7 +114,7 @@ final class SettingsAuditTrail {
             let store = try decoder.decode(SettingsAuditStore.self, from: data)
             events = store.events
         } catch {
-            NSLog("[SettingsAudit] Failed to load audit log: \(error.localizedDescription)")
+            Log.warning("[SettingsAudit] Failed to load audit log: \(error.localizedDescription)")
             events = []
         }
     }
@@ -115,7 +130,7 @@ final class SettingsAuditTrail {
                 let data = try encoder.encode(snapshot)
                 try data.write(to: targetURL, options: .atomic)
             } catch {
-                NSLog("[SettingsAudit] Failed to save audit log: \(error.localizedDescription)")
+                Log.warning("[SettingsAudit] Failed to save audit log: \(error.localizedDescription)")
             }
         }
     }

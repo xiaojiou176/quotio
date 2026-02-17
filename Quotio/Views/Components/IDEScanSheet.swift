@@ -29,7 +29,7 @@ struct IDEScanSheet: View {
             
             // Content
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: 24) {
                     privacyNoticeSection
                     scanOptionsSection
                     
@@ -116,7 +116,7 @@ struct IDEScanSheet: View {
                 scanOptionRow(
                     icon: "cursor-menubar",
                     iconFallback: "laptopcomputer",
-                    title: "Cursor IDE",
+                    title: "ideScan.source.cursor".localized(fallback: "Cursor IDE"),
                     detail: "ideScan.cursor.detail".localized(),
                     isOn: $scanOptions.scanCursor
                 )
@@ -125,7 +125,7 @@ struct IDEScanSheet: View {
                 scanOptionRow(
                     icon: "trae-menubar",
                     iconFallback: "laptopcomputer",
-                    title: "Trae IDE",
+                    title: "ideScan.source.trae".localized(fallback: "Trae IDE"),
                     detail: "ideScan.trae.detail".localized(),
                     isOn: $scanOptions.scanTrae
                 )
@@ -202,21 +202,45 @@ struct IDEScanSheet: View {
             if let result = IDEScanSettingsManager.shared.lastScanResult {
                 VStack(alignment: .leading, spacing: 8) {
                     if result.cursorFound {
-                        resultRow(icon: "checkmark.circle.fill", color: .semanticSuccess, text: "Cursor: \((result.cursorEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
+                        resultRow(
+                            icon: "checkmark.circle.fill",
+                            color: .semanticSuccess,
+                            text: "\("ideScan.source.cursor".localized(fallback: "Cursor")): \((result.cursorEmail ?? "status.found".localized(fallback: "Found")).masked(if: settings.hideSensitiveInfo))"
+                        )
                     } else if scanOptions.scanCursor {
-                        resultRow(icon: "xmark.circle.fill", color: .secondary, text: "Cursor: " + "ideScan.notFound".localized())
+                        resultRow(
+                            icon: "xmark.circle.fill",
+                            color: .secondary,
+                            text: "\("ideScan.source.cursor".localized(fallback: "Cursor")): " + "ideScan.notFound".localized()
+                        )
                     }
                     
                     if result.traeFound {
-                        resultRow(icon: "checkmark.circle.fill", color: .semanticSuccess, text: "Trae: \((result.traeEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
+                        resultRow(
+                            icon: "checkmark.circle.fill",
+                            color: .semanticSuccess,
+                            text: "\("ideScan.source.trae".localized(fallback: "Trae")): \((result.traeEmail ?? "status.found".localized(fallback: "Found")).masked(if: settings.hideSensitiveInfo))"
+                        )
                     } else if scanOptions.scanTrae {
-                        resultRow(icon: "xmark.circle.fill", color: .secondary, text: "Trae: " + "ideScan.notFound".localized())
+                        resultRow(
+                            icon: "xmark.circle.fill",
+                            color: .secondary,
+                            text: "\("ideScan.source.trae".localized(fallback: "Trae")): " + "ideScan.notFound".localized()
+                        )
                     }
                     
                     if !result.cliToolsFound.isEmpty {
-                        resultRow(icon: "checkmark.circle.fill", color: .semanticSuccess, text: "CLI: \(result.cliToolsFound.joined(separator: ", "))")
+                        resultRow(
+                            icon: "checkmark.circle.fill",
+                            color: .semanticSuccess,
+                            text: "\("ideScan.source.cli".localized(fallback: "CLI")): \(result.cliToolsFound.joined(separator: ", "))"
+                        )
                     } else if scanOptions.scanCLITools {
-                        resultRow(icon: "xmark.circle.fill", color: .secondary, text: "CLI: " + "ideScan.notFound".localized())
+                        resultRow(
+                            icon: "xmark.circle.fill",
+                            color: .secondary,
+                            text: "\("ideScan.source.cli".localized(fallback: "CLI")): " + "ideScan.notFound".localized()
+                        )
                     }
                 }
             }
@@ -269,6 +293,7 @@ struct IDEScanSheet: View {
                 dismiss()
             }
             .buttonStyle(.bordered)
+            .keyboardShortcut(.cancelAction)
             
             Spacer()
             
@@ -278,6 +303,7 @@ struct IDEScanSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
             } else {
                 Button {
                     performScan()
@@ -293,9 +319,10 @@ struct IDEScanSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!scanOptions.hasAnyScanEnabled || isScanning)
+                .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
+        .padding(24)
     }
     
     // MARK: - Actions

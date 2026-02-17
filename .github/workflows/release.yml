@@ -78,7 +78,13 @@ jobs:
           ./scripts/bump-version.sh "${{ steps.version.outputs.VERSION }}"
 
       # ===========================================
-      # 6. Build
+      # 6. Test
+      # ===========================================
+      - name: Test
+        run: xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" test
+
+      # ===========================================
+      # 7. Build
       # ===========================================
       - name: Build
         run: |
@@ -86,7 +92,7 @@ jobs:
           ./scripts/build.sh
 
       # ===========================================
-      # 7. Package (ZIP + DMG)
+      # 8. Package (ZIP + DMG)
       # ===========================================
       - name: Install create-dmg
         run: brew install create-dmg
@@ -97,7 +103,7 @@ jobs:
           ./scripts/package.sh
 
       # ===========================================
-      # 8. Generate Appcast with Sparkle signing
+      # 9. Generate Appcast with Sparkle signing
       # ===========================================
       - name: Generate Appcast
         env:
@@ -107,7 +113,7 @@ jobs:
           ./scripts/generate-appcast-ci.sh
 
       # ===========================================
-      # 9. Create tag (for workflow_dispatch)
+      # 10. Create tag (for workflow_dispatch)
       # ===========================================
       - name: Create tag
         if: github.event_name == 'workflow_dispatch'
@@ -119,7 +125,7 @@ jobs:
           fi
 
       # ===========================================
-      # 10. Create GitHub Release
+      # 11. Create GitHub Release
       # ===========================================
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -145,7 +151,7 @@ jobs:
           prerelease: ${{ steps.version.outputs.IS_PRERELEASE == 'true' }}
 
       # ===========================================
-      # 11. Update latest stable release with merged appcast
+      # 12. Update latest stable release with merged appcast
       # ===========================================
       - name: Update latest stable appcast
         if: steps.version.outputs.IS_PRERELEASE == 'true'
@@ -187,16 +193,16 @@ jobs:
               TARGET_BRANCH="${{ github.ref_name }}"
             else
               # For tag push, find branches containing HEAD with deterministic priority
-              # Priority: master > main > first available
+              # Priority: main > master > first available
               BRANCHES=$(git branch -r --contains HEAD | grep -E 'origin/(master|main)' | sed 's|origin/||' | xargs)
               
-              if echo "$BRANCHES" | grep -qw "master"; then
-                TARGET_BRANCH="master"
-              elif echo "$BRANCHES" | grep -qw "main"; then
+              if echo "$BRANCHES" | grep -qw "main"; then
                 TARGET_BRANCH="main"
-              else
-                # Fallback to master if neither found
+              elif echo "$BRANCHES" | grep -qw "master"; then
                 TARGET_BRANCH="master"
+              else
+                # Fallback to main if neither found
+                TARGET_BRANCH="main"
               fi
             fi
             
@@ -211,7 +217,7 @@ jobs:
           fi
 
       # ===========================================
-      # 12. Summary
+      # 13. Summary
       # ===========================================
       - name: Summary
         run: |
@@ -225,7 +231,7 @@ jobs:
           ls -la build/release/ >> $GITHUB_STEP_SUMMARY
 
       # ===========================================
-      # 13. Trigger homebrew-tap update
+      # 14. Trigger homebrew-tap update
       # ===========================================
       - name: Trigger homebrew-tap update
         if: steps.version.outputs.IS_PRERELEASE == 'false'

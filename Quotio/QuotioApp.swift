@@ -10,6 +10,21 @@ import ServiceManagement
 import Sparkle
 #endif
 
+private enum RuntimeMode {
+    static var isRunningTests: Bool {
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+        let arguments = ProcessInfo.processInfo.arguments
+        return arguments.contains { $0.localizedCaseInsensitiveContains("xctest") }
+    }
+
+    static var isUITestHarnessEnabled: Bool {
+        ProcessInfo.processInfo.environment["QUOTIO_UI_TEST_MODE"] == "1"
+    }
+}
+
 // MARK: - App Bootstrap (Singleton for headless initialization)
 
 /// Manages app-wide initialization that must happen regardless of window visibility.
@@ -36,6 +51,11 @@ final class AppBootstrap {
     func initializeIfNeeded() async {
         guard !hasInitialized else { return }
         hasInitialized = true
+
+        // Hosted unit tests should not execute app bootstrap side effects.
+        if RuntimeMode.isRunningTests {
+            return
+        }
 
         appearanceManager.applyAppearance()
 
@@ -185,75 +205,80 @@ struct QuotioApp: App {
 
     private var viewModel: QuotaViewModel { bootstrap.viewModel }
 
-
     var body: some Scene {
         Window("Quotio", id: "main") {
-            ContentView()
-                .id(languageManager.currentLanguage) // Force re-render on language change
-                .environment(viewModel)
-                .environment(logsViewModel)
-                .environment(\.locale, languageManager.locale)
-                .task {
-                    // Initialize via bootstrap (idempotent - safe to call multiple times)
-                    // This handles the case where window opens before AppDelegate finishes
-                    await bootstrap.initializeIfNeeded()
+            Group {
+                if RuntimeMode.isUITestHarnessEnabled {
+                    UITestHarnessView()
+                } else {
+                    ContentView()
+                        .id(languageManager.currentLanguage) // Force re-render on language change
+                        .environment(viewModel)
+                        .environment(logsViewModel)
+                        .environment(\.locale, languageManager.locale)
+                        .task {
+                            // Initialize via bootstrap (idempotent - safe to call multiple times)
+                            // This handles the case where window opens before AppDelegate finishes
+                            await bootstrap.initializeIfNeeded()
 
-                    // Show onboarding if needed
-                    if bootstrap.needsOnboarding {
-                        showOnboarding = true
-                    }
-                }
-                .onChange(of: viewModel.proxyManager.proxyStatus.running) {
-                    bootstrap.updateStatusBar()
-                }
-                .onChange(of: viewModel.isLoadingQuotas) {
-                    bootstrap.updateStatusBar()
-                    // Rebuild menu when loading state changes so loader updates
-                    statusBarManager.rebuildMenuInPlace()
-                }
-                .onChange(of: languageManager.currentLanguage) { _, _ in
-                    // Rebuild menu bar when language changes
-                    statusBarManager.rebuildMenuInPlace()
-                }
-                .onChange(of: menuBarSettings.showQuotaInMenuBar) {
-                    bootstrap.updateStatusBar()
-                }
-                .onChange(of: menuBarSettings.showMenuBarIcon) {
-                    bootstrap.updateStatusBar()
-                }
-                .onChange(of: menuBarSettings.selectedItems) {
-                    bootstrap.updateStatusBar()
-                }
-                .onChange(of: menuBarSettings.colorMode) {
-                    bootstrap.updateStatusBar()
-                }
-                .onChange(of: menuBarSettings.totalUsageMode) {
-                    bootstrap.updateStatusBar()
-                    statusBarManager.rebuildMenuInPlace()
-                }
-                .onChange(of: menuBarSettings.modelAggregationMode) {
-                    bootstrap.updateStatusBar()
-                    statusBarManager.rebuildMenuInPlace()
-                }
-                .onChange(of: modeManager.currentMode) {
-                    bootstrap.updateStatusBar()
-                }
-                .onChange(of: viewModel.providerQuotas.count) {
-                    bootstrap.updateStatusBar()
-                    statusBarManager.rebuildMenuInPlace()
-                }
-                .onChange(of: viewModel.directAuthFiles.count) {
-                    bootstrap.updateStatusBar()
-                    statusBarManager.rebuildMenuInPlace()
-                }
-                .sheet(isPresented: $showOnboarding) {
-                    OnboardingFlow {
-                        Task {
-                            await bootstrap.completeOnboarding()
+                            // Show onboarding if needed
+                            if bootstrap.needsOnboarding {
+                                showOnboarding = true
+                            }
+                        }
+                        .onChange(of: viewModel.proxyManager.proxyStatus.running) {
+                            bootstrap.updateStatusBar()
+                        }
+                        .onChange(of: viewModel.isLoadingQuotas) {
+                            bootstrap.updateStatusBar()
+                            // Rebuild menu when loading state changes so loader updates
+                            statusBarManager.rebuildMenuInPlace()
+                        }
+                        .onChange(of: languageManager.currentLanguage) { _, _ in
+                            // Rebuild menu bar when language changes
+                            statusBarManager.rebuildMenuInPlace()
+                        }
+                        .onChange(of: menuBarSettings.showQuotaInMenuBar) {
+                            bootstrap.updateStatusBar()
+                        }
+                        .onChange(of: menuBarSettings.showMenuBarIcon) {
+                            bootstrap.updateStatusBar()
+                        }
+                        .onChange(of: menuBarSettings.selectedItems) {
+                            bootstrap.updateStatusBar()
+                        }
+                        .onChange(of: menuBarSettings.colorMode) {
+                            bootstrap.updateStatusBar()
+                        }
+                        .onChange(of: menuBarSettings.totalUsageMode) {
+                            bootstrap.updateStatusBar()
+                            statusBarManager.rebuildMenuInPlace()
+                        }
+                        .onChange(of: menuBarSettings.modelAggregationMode) {
+                            bootstrap.updateStatusBar()
+                            statusBarManager.rebuildMenuInPlace()
+                        }
+                        .onChange(of: modeManager.currentMode) {
+                            bootstrap.updateStatusBar()
+                        }
+                        .onChange(of: viewModel.providerQuotas.count) {
+                            bootstrap.updateStatusBar()
+                            statusBarManager.rebuildMenuInPlace()
+                        }
+                        .onChange(of: viewModel.directAuthFiles.count) {
+                            bootstrap.updateStatusBar()
+                            statusBarManager.rebuildMenuInPlace()
+                        }
+                        .sheet(isPresented: $showOnboarding) {
+                            OnboardingFlow {
+                                Task {
+                                    await bootstrap.completeOnboarding()
+                                }
+                            }
                         }
                     }
                 }
-        }
+            }
         .defaultSize(width: 1000, height: 700)
         .commands {
             CommandGroup(replacing: .newItem) { }
@@ -270,12 +295,31 @@ struct QuotioApp: App {
     }
 }
 
+private struct UITestHarnessView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("ui.test.harness.title".localized(fallback: "Quotio UI Test Harness"))
+                .font(.title3.weight(.semibold))
+            Text("ui.test.harness.ready".localized(fallback: "UI 测试就绪"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("ui-test-harness-root")
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private nonisolated(unsafe) var windowWillCloseObserver: NSObjectProtocol?
     private nonisolated(unsafe) var windowDidBecomeKeyObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if RuntimeMode.isRunningTests {
+            return
+        }
+
         // Move orphan cleanup off main thread to avoid blocking app launch
         DispatchQueue.global(qos: .utility).async {
             TunnelManager.cleanupOrphans()
@@ -352,6 +396,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if RuntimeMode.isRunningTests {
+            return
+        }
+
         // Stop background polling
         AtomFeedUpdateService.shared.stopPolling()
 
@@ -371,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if result == .timedOut {
             // Fallback: force kill orphan processes if stopTunnel timed out
             TunnelManager.cleanupOrphans()
-            NSLog("[AppDelegate] Tunnel cleanup timed out, forced orphan cleanup")
+            Log.warning("[AppDelegate] Tunnel cleanup timed out, forced orphan cleanup")
         }
     }
 
@@ -409,7 +457,7 @@ struct ContentView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 List(selection: $vm.currentPage) {
-                    Section("概览") {
+                    Section("nav.section.overview".localized(fallback: "概览")) {
                         Label("nav.dashboard".localized(), systemImage: "gauge.with.dots.needle.33percent")
                             .tag(NavigationPage.dashboard)
                         
@@ -417,14 +465,14 @@ struct ContentView: View {
                             .tag(NavigationPage.quota)
                     }
 
-                    Section("资源") {
+                    Section("nav.section.resources".localized(fallback: "资源")) {
                         Label(modeManager.isMonitorMode ? "nav.accounts".localized() : "nav.providers".localized(), 
                               systemImage: "person.2.badge.key")
                             .tag(NavigationPage.providers)
                     }
 
                     if modeManager.isProxyMode {
-                        Section("运行与观测") {
+                        Section("nav.section.operations".localized(fallback: "运行与观测")) {
                             HStack(spacing: 6) {
                                 Label("nav.fallback".localized(), systemImage: "arrow.triangle.branch")
                                 ExperimentalBadge()
@@ -449,7 +497,7 @@ struct ContentView: View {
                         }
                     }
 
-                    Section("系统") {
+                    Section("nav.section.system".localized(fallback: "系统")) {
                         Label("nav.settings".localized(), systemImage: "gearshape")
                             .tag(NavigationPage.settings)
                         
@@ -507,6 +555,7 @@ struct ContentView: View {
                                 Image(systemName: viewModel.proxyManager.proxyStatus.running ? "stop.fill" : "play.fill")
                             }
                             .help(viewModel.proxyManager.proxyStatus.running ? "action.stopProxy".localized() : "action.startProxy".localized())
+                            .accessibilityLabel(viewModel.proxyManager.proxyStatus.running ? "action.stopProxy".localized() : "action.startProxy".localized())
                         }
                     } else {
                         // Monitor or remote mode: refresh button
@@ -516,6 +565,7 @@ struct ContentView: View {
                             Image(systemName: "arrow.clockwise")
                         }
                         .help("action.refreshQuota".localized())
+                        .accessibilityLabel("action.refreshQuota".localized())
                         .disabled(viewModel.isLoadingQuotas)
                     }
                 }
@@ -575,10 +625,10 @@ struct RemoteStatusRow: View {
     
     private var statusColor: Color {
         switch modeManager.connectionStatus {
-        case .connected: return .green
-        case .connecting: return .orange
-        case .disconnected: return .gray
-        case .error: return .red
+        case .connected: return Color.semanticSuccess
+        case .connecting: return Color.semanticWarning
+        case .disconnected: return .secondary
+        case .error: return Color.semanticDanger
         }
     }
     
@@ -602,7 +652,7 @@ struct ProxyStatusRow: View {
                 SmallProgressView(size: 8)
             } else {
                 Circle()
-                    .fill(viewModel.proxyManager.proxyStatus.running ? .green : .gray)
+                    .fill(viewModel.proxyManager.proxyStatus.running ? Color.semanticSuccess : .secondary)
                     .frame(width: 8, height: 8)
             }
             
@@ -639,7 +689,10 @@ struct QuotaRefreshStatusRow: View {
                     .foregroundStyle(.secondary)
                 
                 if let lastRefresh = viewModel.lastQuotaRefreshTime {
-                    Text("status.updatedAgo \(lastRefresh, style: .relative)")
+                    HStack(spacing: 4) {
+                        Text("status.updatedAgo".localized(fallback: "更新于"))
+                        Text(lastRefresh, style: .relative)
+                    }
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

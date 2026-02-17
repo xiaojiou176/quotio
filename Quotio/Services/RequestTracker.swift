@@ -45,11 +45,19 @@ final class RequestTracker {
     
     /// Storage file URL
     private var storageURL: URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            fatalError("Application Support directory not found")
+        let baseURL: URL
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            baseURL = appSupport
+        } else {
+            baseURL = FileManager.default.temporaryDirectory
+            Log.warning("Application Support directory unavailable, request tracker falling back to temporary directory")
         }
-        let quotioDir = appSupport.appendingPathComponent("Quotio")
-        try? FileManager.default.createDirectory(at: quotioDir, withIntermediateDirectories: true)
+        let quotioDir = baseURL.appendingPathComponent("Quotio")
+        do {
+            try FileManager.default.createDirectory(at: quotioDir, withIntermediateDirectories: true)
+        } catch {
+            Log.warning("[RequestTracker] Failed to create storage directory: \(error.localizedDescription)")
+        }
         return quotioDir.appendingPathComponent("request-history.json")
     }
     
@@ -76,7 +84,7 @@ final class RequestTracker {
         let reducedLimit = 10
         if requestHistory.count > reducedLimit {
             requestHistory = Array(requestHistory.prefix(reducedLimit))
-            NSLog("[RequestTracker] Trimmed to \(reducedLimit) entries for background")
+            Log.debug("[RequestTracker] Trimmed to \(reducedLimit) entries for background")
         }
     }
     
@@ -85,13 +93,13 @@ final class RequestTracker {
     /// Start tracking (called when proxy starts)
     func start() {
         isActive = true
-        NSLog("[RequestTracker] Started tracking")
+        Log.debug("[RequestTracker] Started tracking")
     }
     
     /// Stop tracking (called when proxy stops)
     func stop() {
         isActive = false
-        NSLog("[RequestTracker] Stopped tracking")
+        Log.debug("[RequestTracker] Stopped tracking")
     }
     
     /// Add a request from ProxyBridge callback
@@ -155,7 +163,7 @@ final class RequestTracker {
     
     private func loadFromDisk() {
         guard FileManager.default.fileExists(atPath: storageURL.path) else {
-            NSLog("[RequestTracker] No history file found, starting fresh")
+            Log.debug("[RequestTracker] No history file found, starting fresh")
             return
         }
 
@@ -166,13 +174,13 @@ final class RequestTracker {
             store = try decoder.decode(RequestHistoryStore.self, from: data)
             requestHistory = Array(store.entries.prefix(memoryWindowSize))
             stats = store.calculateStats()
-            NSLog("[RequestTracker] Loaded \(store.entries.count) entries from disk")
+            Log.debug("[RequestTracker] Loaded \(store.entries.count) entries from disk")
         } catch {
-            NSLog("[RequestTracker] Failed to load history: \(error)")
+            Log.warning("[RequestTracker] Failed to load history: \(error.localizedDescription)")
             lastError = error.localizedDescription
             // If decoding fails due to format mismatch, clear the corrupt file
             try? FileManager.default.removeItem(at: storageURL)
-            NSLog("[RequestTracker] Removed corrupt history file, starting fresh")
+            Log.warning("[RequestTracker] Removed corrupt history file, starting fresh")
         }
     }
     
@@ -190,7 +198,7 @@ final class RequestTracker {
                 let data = try encoder.encode(storeSnapshot)
                 try data.write(to: storageURLSnapshot)
             } catch {
-                NSLog("[RequestTracker] Failed to save history: \(error)")
+                Log.warning("[RequestTracker] Failed to save history: \(error.localizedDescription)")
             }
         }
     }

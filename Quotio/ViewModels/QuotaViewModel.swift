@@ -93,6 +93,10 @@ final class QuotaViewModel {
     /// Quota data per provider per account (email -> QuotaData)
     var providerQuotas: [AIProvider: [String: ProviderQuotaData]] = [:]
     
+    /// Last fetch failure reason per provider/account key.
+    /// Used by quota cards to explain why an account currently has no quota data.
+    var providerQuotaFailures: [AIProvider: [String: String]] = [:]
+    
     /// Subscription info per provider per account (provider -> email -> SubscriptionInfo)
     var subscriptionInfos: [AIProvider: [String: SubscriptionInfo]] = [:]
     
@@ -1352,8 +1356,13 @@ final class QuotaViewModel {
     
     private func refreshOpenAIQuotasInternal() async {
         // Use proxyManager's authDir (which points to ~/.cli-proxy-api)
-        let quotas = await openAIFetcher.fetchAllCodexQuotas(authDir: proxyManager.authDir)
-        providerQuotas[.codex] = quotas
+        let report = await openAIFetcher.fetchAllCodexQuotas(authDir: proxyManager.authDir)
+        providerQuotas[.codex] = report.quotas
+        if report.failures.isEmpty {
+            providerQuotaFailures.removeValue(forKey: .codex)
+        } else {
+            providerQuotaFailures[.codex] = report.failures
+        }
     }
     
     private func refreshCopilotQuotasInternal() async {

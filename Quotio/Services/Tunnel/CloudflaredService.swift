@@ -163,7 +163,7 @@ actor CloudflaredService {
         do {
             try newProcess.run()
             self.process = newProcess
-            NSLog("[CloudflaredService] Started tunnel on port %d, PID: %d", port, newProcess.processIdentifier)
+            Log.proxy("[CloudflaredService] Started tunnel on port \(port), PID: \(newProcess.processIdentifier)")
         } catch {
             cleanup()
             throw TunnelError.startFailed(error.localizedDescription)
@@ -177,7 +177,7 @@ actor CloudflaredService {
         }
         
         let pid = process.processIdentifier
-        NSLog("[CloudflaredService] Stopping tunnel, PID: %d", pid)
+        Log.proxy("[CloudflaredService] Stopping tunnel, PID: \(pid)")
         
         process.terminate()
         
@@ -187,7 +187,7 @@ actor CloudflaredService {
         }
         
         if process.isRunning {
-            NSLog("[CloudflaredService] Force killing tunnel, PID: %d", pid)
+            Log.warning("[CloudflaredService] Force killing tunnel, PID: \(pid)")
             kill(pid, SIGKILL)
         }
         
@@ -237,8 +237,8 @@ actor CloudflaredService {
             
             try killProcess.run()
             killProcess.waitUntilExit()
-            
-            NSLog("[CloudflaredService] Cleaned up orphan cloudflared processes")
+
+            Log.proxy("[CloudflaredService] Cleaned up orphan cloudflared processes")
         } catch {
             // Silent failure - no orphans to kill is fine
         }

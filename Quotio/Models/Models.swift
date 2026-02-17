@@ -380,7 +380,21 @@ nonisolated struct AuthFile: Codable, Identifiable, Hashable, Sendable {
 
     var normalizedErrorKind: String? {
         let raw = errorKind?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        return raw.isEmpty ? nil : raw
+        let canonical = raw.replacingOccurrences(of: "-", with: "_")
+        return canonical.isEmpty ? nil : canonical
+    }
+
+    private var normalizedErrorContext: String {
+        let candidates: [String?] = [
+            normalizedErrorKind,
+            errorReason?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "-", with: "_"),
+            statusMessage?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "-", with: "_")
+        ]
+        let parts = candidates.compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        return parts.joined(separator: " ")
     }
 
     var frozenUntilDate: Date? {
@@ -388,24 +402,28 @@ nonisolated struct AuthFile: Codable, Identifiable, Hashable, Sendable {
     }
 
     var isQuotaLimited5h: Bool {
-        normalizedErrorKind == "quota_limited_5h"
+        let context = normalizedErrorContext
+        return context.contains("quota_limited_5h")
+            || context.contains("quota_limited5h")
     }
 
     var isQuotaLimited7d: Bool {
-        normalizedErrorKind == "quota_limited_7d"
+        let context = normalizedErrorContext
+        return context.contains("quota_limited_7d")
+            || context.contains("quota_limited_7days")
+            || context.contains("quota_limited7days")
     }
 
     var isNetworkError: Bool {
-        normalizedErrorKind == "network_error"
+        normalizedErrorContext.contains("network_error")
     }
 
     var isFatalDisabled: Bool {
-        guard disabled else { return false }
-        if disabledByPolicy == true {
+        let context = normalizedErrorContext
+        if context.contains("workspace_deactivated") && (disabledByPolicy == true || disabled) {
             return true
         }
-        let fatalKinds: Set<String> = ["account_deactivated", "workspace_deactivated"]
-        if let kind = normalizedErrorKind, fatalKinds.contains(kind) {
+        if context.contains("account_deactivated") {
             return true
         }
         return false
@@ -608,7 +626,18 @@ nonisolated struct RequestHistoryItem: Codable, Sendable, Identifiable {
     let tokens: Int?
     
     var id: String {
-        requestId ?? "\(timestamp)-\(authIndex ?? "")-\(model ?? "")"
+        if let requestId, !requestId.isEmpty {
+            return requestId
+        }
+        return [
+            timestamp,
+            authIndex ?? "",
+            model ?? "",
+            source ?? "",
+            apiKey ?? "",
+            String(tokens ?? 0),
+            String(success)
+        ].joined(separator: "|")
     }
     
     enum CodingKeys: String, CodingKey {
@@ -633,6 +662,8 @@ nonisolated struct RequestHistoryItem: Codable, Sendable, Identifiable {
 
 nonisolated struct SSERequestEvent: Codable, Sendable {
     let type: String  // "request" | "quota_exceeded" | "error" | "connected"
+    let seq: Int64?
+    let eventId: String?
     let timestamp: String
     let requestId: String?
     let provider: String?
@@ -646,6 +677,8 @@ nonisolated struct SSERequestEvent: Codable, Sendable {
     
     enum CodingKeys: String, CodingKey {
         case type
+        case seq
+        case eventId = "event_id"
         case timestamp
         case requestId = "request_id"
         case provider
@@ -662,6 +695,21 @@ nonisolated struct SSERequestEvent: Codable, Sendable {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: timestamp) ?? ISO8601DateFormatter().date(from: timestamp)
+    }
+
+    /// Stable client-side dedupe key for real-time event streams.
+    var dedupeKey: String {
+        if let seq, seq > 0 {
+            return "seq:\(seq)"
+        }
+        if let eventId, !eventId.isEmpty {
+            return "event:\(eventId)"
+        }
+        if let requestId, !requestId.isEmpty {
+            return requestId
+        }
+        return [type, timestamp, provider ?? "", model ?? "", authFile ?? "", source ?? "", String(tokens ?? 0), String(success ?? false)]
+            .joined(separator: "|")
     }
 }
 
@@ -846,6 +894,7 @@ nonisolated extension Color {
     static var semanticSelectionFill: Color { Color.semanticInfo.opacity(0.1) }
     static var semanticWarningFill: Color { Color.semanticWarning.opacity(0.12) }
     static var semanticMutedFill: Color { Color.secondary.opacity(0.2) }
+    static var semanticOnAccent: Color { .white }
 }
 
 // MARK: - Formatting Helpers
@@ -939,6 +988,14 @@ nonisolated enum ProxyURLValidator {
     
     static func sanitize(_ urlString: String) -> String {
         var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if var components = URLComponents(string: trimmed) {
+            components.user = nil
+            components.password = nil
+            if let normalized = components.string {
+                trimmed = normalized
+            }
+        }
         
         while trimmed.hasSuffix("/") {
             trimmed.removeLast()

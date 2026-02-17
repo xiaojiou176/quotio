@@ -252,7 +252,7 @@ struct StatusBarQuotaItemView: View {
             if item.isForbidden {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.semanticWarning)
             } else if item.percentage >= 0 {
                 Text(formatPercentage(displayPercent))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))

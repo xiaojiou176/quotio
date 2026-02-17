@@ -86,7 +86,7 @@ final class CLIProxyManager {
                 if let pid = Int32(pidString.trimmingCharacters(in: .whitespaces)) {
                     // Never kill our own process - ProxyBridge uses NWListener in-process
                     if pid == ownPid {
-                        NSLog("[CLIProxyManager] Skipping kill of own PID \(pid) on port \(port) during shutdown")
+                        Log.proxy("[CLIProxyManager] Skipping kill of own PID \(pid) on port \(port) during shutdown")
                         continue
                     }
                     kill(pid, SIGKILL)
@@ -192,8 +192,9 @@ final class CLIProxyManager {
     }
     
     init() {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            fatalError("Application Support directory not found")
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        if appSupport == FileManager.default.temporaryDirectory {
+            Log.warning("Application Support directory unavailable, CLIProxyManager falling back to temporary directory")
         }
         let quotioDir = appSupport.appendingPathComponent("Quotio")
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
@@ -235,16 +236,16 @@ final class CLIProxyManager {
         guard proxyStatus.running else { return }
 
         Task {
-            NSLog("[CLIProxyManager] Restarting proxy to apply configuration changes...")
+            Log.proxy("[CLIProxyManager] Restarting proxy to apply configuration changes...")
             stop()
             // Wait 0.5s for ports to clear
             try? await Task.sleep(nanoseconds: 500_000_000)
 
             do {
                 try await start()
-                NSLog("[CLIProxyManager] Proxy restarted successfully")
+                Log.proxy("[CLIProxyManager] Proxy restarted successfully")
             } catch {
-                NSLog("[CLIProxyManager] Failed to restart proxy: \(error)")
+                Log.proxy("[CLIProxyManager] Failed to restart proxy: \(error)")
                 lastError = "Failed to restart: \(error.localizedDescription)"
             }
         }
@@ -253,12 +254,12 @@ final class CLIProxyManager {
     private func updateConfigValue(pattern: String, replacement: String) {
         guard FileManager.default.fileExists(atPath: configPath),
               var content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
-            NSLog("[CLIProxyManager] ERROR: Failed to read config file at \(configPath)")
+            Log.proxy("[CLIProxyManager] ERROR: Failed to read config file at \(configPath)")
             return
         }
         
         guard let range = content.range(of: pattern, options: .regularExpression) else {
-            NSLog("[CLIProxyManager] ERROR: Pattern '\(pattern)' not found in config")
+            Log.proxy("[CLIProxyManager] ERROR: Pattern '\(pattern)' not found in config")
             return
         }
         
@@ -266,7 +267,7 @@ final class CLIProxyManager {
             content.replaceSubrange(range, with: replacement)
             try content.write(toFile: configPath, atomically: true, encoding: .utf8)
         } catch {
-            NSLog("[CLIProxyManager] ERROR: Failed to write config file: \(error)")
+            Log.proxy("[CLIProxyManager] ERROR: Failed to write config file: \(error)")
         }
     }
 
@@ -340,7 +341,7 @@ final class CLIProxyManager {
     /// Note: Changes take effect after proxy restart (CLIProxyAPI does not support live routing API)
     func updateConfigRoutingStrategy(_ strategy: String) {
         updateConfigValue(pattern: #"strategy:\s*"[^"]*""#, replacement: "strategy: \"\(strategy)\"")
-        NSLog("[CLIProxyManager] Routing strategy updated to: \(strategy) (restarting proxy)")
+        Log.proxy("[CLIProxyManager] Routing strategy updated to: \(strategy) (restarting proxy)")
         restartProxyIfRunning()
     }
     
@@ -418,7 +419,7 @@ final class CLIProxyManager {
                 try fileManager.moveItem(atPath: backupPath, toPath: originalPath)
                 restoredCount += 1
             } catch {
-                NSLog("[CLIProxyManager] Failed to restore backup for \(file): \(error)")
+                Log.proxy("[CLIProxyManager] Failed to restore backup for \(file): \(error)")
             }
         }
 
@@ -836,7 +837,7 @@ final class CLIProxyManager {
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             // Discard data to prevent memory accumulation
-            // If debug logging needed: NSLog("[CLIProxyAPI] \(String(data: data, encoding: .utf8) ?? "")")
+            // If debug logging needed: Log.proxy("[CLIProxyAPI] \(String(data: data, encoding: .utf8) ?? "")")
             _ = data.count
         }
         
@@ -907,9 +908,9 @@ final class CLIProxyManager {
                     throw ProxyError.startupFailed
                 }
                 
-                NSLog("[CLIProxyManager] Two-layer proxy started: clients → \(userPort) → \(cliProxyPort)")
+                Log.proxy("[CLIProxyManager] Two-layer proxy started: clients → \(userPort) → \(cliProxyPort)")
             } else {
-                NSLog("[CLIProxyManager] Direct proxy started on port \(userPort)")
+                Log.proxy("[CLIProxyManager] Direct proxy started on port \(userPort)")
             }
             
             proxyStatus.running = true
@@ -1003,7 +1004,7 @@ final class CLIProxyManager {
         // Skip health check during managed upgrades to avoid racing with upgrade flow
         switch managerState {
         case .testing, .promoting, .rollingBack:
-            NSLog("[CLIProxyManager] Skipping health check during \(managerState) state")
+            Log.proxy("[CLIProxyManager] Skipping health check during \(managerState) state")
             return
         case .idle, .active:
             break
@@ -1022,7 +1023,7 @@ final class CLIProxyManager {
         
         switch managerState {
         case .testing, .promoting, .rollingBack:
-            NSLog("[CLIProxyManager] Aborting health check action - manager entered \(managerState) state")
+            Log.proxy("[CLIProxyManager] Aborting health check action - manager entered \(managerState) state")
             return
         case .idle, .active:
             break
@@ -1032,10 +1033,10 @@ final class CLIProxyManager {
             healthCheckFailures = 0
         } else {
             healthCheckFailures += 1
-            NSLog("[CLIProxyManager] Health check failed (\(healthCheckFailures)/\(maxHealthCheckFailures))")
+            Log.proxy("[CLIProxyManager] Health check failed (\(healthCheckFailures)/\(maxHealthCheckFailures))")
             
             if healthCheckFailures >= maxHealthCheckFailures {
-                NSLog("[CLIProxyManager] Max failures reached, auto-restarting proxy...")
+                Log.proxy("[CLIProxyManager] Max failures reached, auto-restarting proxy...")
                 healthCheckFailures = 0
                 
                 stop()
@@ -1043,9 +1044,9 @@ final class CLIProxyManager {
                 
                 do {
                     try await start()
-                    NSLog("[CLIProxyManager] Auto-restart successful")
+                    Log.proxy("[CLIProxyManager] Auto-restart successful")
                 } catch {
-                    NSLog("[CLIProxyManager] Auto-restart failed: \(error)")
+                    Log.proxy("[CLIProxyManager] Auto-restart failed: \(error)")
                     NotificationManager.shared.notifyProxyCrashed(exitCode: -1)
                 }
             }
@@ -1072,9 +1073,9 @@ final class CLIProxyManager {
                 // Only kill internal port if bridge mode is enabled
                 if bridgeMode {
                     Self.killProcessOnPortSync(intPort)
-                    NSLog("[CLIProxyManager] Cleaned up orphan processes on ports \(userPort) and \(intPort)")
+                    Log.proxy("[CLIProxyManager] Cleaned up orphan processes on ports \(userPort) and \(intPort)")
                 } else {
-                    NSLog("[CLIProxyManager] Cleaned up orphan processes on port \(userPort)")
+                    Log.proxy("[CLIProxyManager] Cleaned up orphan processes on port \(userPort)")
                 }
                 
                 // Small delay to ensure ports are released
@@ -1111,7 +1112,7 @@ final class CLIProxyManager {
                 if let pid = Int32(pidString.trimmingCharacters(in: .whitespaces)) {
                     // Never kill our own process - ProxyBridge uses NWListener in-process
                     if pid == ownPid {
-                        NSLog("[CLIProxyManager] Skipping kill of own PID \(pid) on port \(port)")
+                        Log.proxy("[CLIProxyManager] Skipping kill of own PID \(pid) on port \(port)")
                         continue
                     }
                     kill(pid, SIGKILL)
@@ -1436,9 +1437,9 @@ extension CLIProxyManager {
 
             // Note: Notification is handled by AtomFeedUpdateService polling
             let version = latestTag.hasPrefix("v") ? String(latestTag.dropFirst()) : latestTag
-            NSLog("[CLIProxyManager] Upgrade available: \(version)")
+            Log.proxy("[CLIProxyManager] Upgrade available: \(version)")
         } catch {
-            NSLog("[CLIProxyManager] Failed to fetch release details: \(error.localizedDescription)")
+            Log.proxy("[CLIProxyManager] Failed to fetch release details: \(error.localizedDescription)")
             upgradeAvailable = false
             availableUpgrade = nil
         }

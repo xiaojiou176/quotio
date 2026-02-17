@@ -7,6 +7,11 @@
 
 import SwiftUI
 
+private nonisolated func localizedStepTitle(_ key: String, fallback: String) -> String {
+    let value = key.localizedStatic()
+    return value == key ? fallback : value
+}
+
 enum OnboardingStep: Int, CaseIterable {
     case welcome = 0
     case modeSelection = 1
@@ -16,11 +21,11 @@ enum OnboardingStep: Int, CaseIterable {
     
     var title: String {
         switch self {
-        case .welcome: return "onboarding.step.welcome".localizedStatic()
-        case .modeSelection: return "onboarding.step.mode".localizedStatic()
-        case .remoteSetup: return "onboarding.step.remote".localizedStatic()
-        case .providers: return "onboarding.step.providers".localizedStatic()
-        case .completion: return "onboarding.step.completion".localizedStatic()
+        case .welcome: return localizedStepTitle("onboarding.step.welcome", fallback: "欢迎")
+        case .modeSelection: return localizedStepTitle("onboarding.step.mode", fallback: "模式")
+        case .remoteSetup: return localizedStepTitle("onboarding.step.remote", fallback: "远程")
+        case .providers: return localizedStepTitle("onboarding.step.providers", fallback: "提供商")
+        case .completion: return localizedStepTitle("onboarding.step.completion", fallback: "完成")
         }
     }
 }

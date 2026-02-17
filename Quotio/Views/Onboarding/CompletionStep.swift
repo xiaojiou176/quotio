@@ -46,7 +46,7 @@ struct CompletionStep: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(40)
+        .padding(32)
     }
     
     private var successIcon: some View {
@@ -62,13 +62,13 @@ struct CompletionStep: View {
     }
     
     private var selectedModeCard: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: viewModel.selectedMode.icon)
                 .font(.title2)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.semanticOnAccent)
                 .frame(width: 44, height: 44)
                 .background(viewModel.selectedMode.color)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.selectedMode.displayName)

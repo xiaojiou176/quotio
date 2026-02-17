@@ -17,7 +17,7 @@ struct WelcomeStep: View {
                     .resizable()
                     .frame(width: 96, height: 96)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
+                    .shadow(color: Color.primary.opacity(0.1), radius: 8, y: 4)
             }
             
             VStack(spacing: 12) {
@@ -43,7 +43,7 @@ struct WelcomeStep: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
         }
-        .padding(40)
+        .padding(32)
     }
 }
 

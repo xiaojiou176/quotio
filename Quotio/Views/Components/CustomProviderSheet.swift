@@ -36,7 +36,7 @@ struct CustomProviderSheet: View {
             Divider()
             
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     basicInfoSection
                     apiKeysSection
                     
@@ -50,7 +50,7 @@ struct CustomProviderSheet: View {
                     
                     enabledSection
                 }
-                .padding(20)
+                .padding(24)
             }
             
             Divider()
@@ -100,7 +100,7 @@ struct CustomProviderSheet: View {
             .accessibilityLabel("action.close".localized())
             .help("action.close".localized())
         }
-        .padding(20)
+        .padding(24)
     }
     
     // MARK: - Basic Info Section
@@ -445,7 +445,7 @@ struct CustomProviderSheet: View {
             .keyboardShortcut(.return, modifiers: .command)
             .buttonStyle(.borderedProminent)
         }
-        .padding(20)
+        .padding(24)
     }
     
     // MARK: - Actions
@@ -502,7 +502,5 @@ private extension Array {
 // MARK: - Preview
 
 #Preview {
-    CustomProviderSheet(provider: nil) { provider in
-        print("Saved: \(provider.name)")
-    }
+    CustomProviderSheet(provider: nil) { _ in }
 }

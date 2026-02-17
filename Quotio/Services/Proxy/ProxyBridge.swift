@@ -676,7 +676,7 @@ final class ProxyBridge {
 
         let sourceResult = classifyRequestSource(headers: headers, path: path, body: body)
         let accountHint = extractAccountHint(headers: headers)
-        let payloadSnippet = isPayloadEvidenceCaptureEnabled() ? redactAndTrimPayload(body) : nil
+        let payloadSnippet = isPayloadEvidenceCaptureEnabled() ? captureAndTrimPayload(body) : nil
 
         return (
             requestId: requestId,
@@ -759,25 +759,12 @@ final class ProxyBridge {
         headers.first { $0.0.caseInsensitiveCompare(key) == .orderedSame }?.1
     }
 
-    private nonisolated func redactAndTrimPayload(_ body: String, limit: Int = 4096) -> String? {
+    private nonisolated func captureAndTrimPayload(_ body: String, limit: Int = 4096) -> String? {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-
-        if let bodyData = body.data(using: .utf8),
-           let jsonObject = try? JSONSerialization.jsonObject(with: bodyData),
-           let redacted = redactSensitiveValues(in: jsonObject),
-           let redactedData = try? JSONSerialization.data(withJSONObject: redacted, options: [.prettyPrinted, .sortedKeys]),
-           var payload = String(data: redactedData, encoding: .utf8) {
-            if payload.count > limit {
-                payload = String(payload.prefix(limit)) + "\n...<truncated>"
-            }
-            return payload
+        if body.count > limit {
+            return String(body.prefix(limit)) + "\n...<truncated>"
         }
-
-        var payload = body
-        if payload.count > limit {
-            payload = String(payload.prefix(limit)) + "\n...<truncated>"
-        }
-        return payload
+        return body
     }
 
     private nonisolated func isPayloadEvidenceCaptureEnabled() -> Bool {
@@ -787,36 +774,6 @@ final class ProxyBridge {
         }
         return defaults.bool(forKey: "ui.captureRequestPayloadEvidence")
     }
-
-    private nonisolated func redactSensitiveValues(in object: Any) -> Any? {
-        let sensitiveKeys = [
-            "api_key", "apikey", "token", "authorization", "password", "secret",
-            "access_token", "refresh_token", "cookie", "session", "key"
-        ]
-
-        if let dict = object as? [String: Any] {
-            var result: [String: Any] = [:]
-            for (key, value) in dict {
-                let normalized = key.lowercased()
-                let shouldRedact = sensitiveKeys.contains { normalized.contains($0) }
-                if shouldRedact {
-                    result[key] = "<redacted>"
-                } else if let nested = redactSensitiveValues(in: value) {
-                    result[key] = nested
-                } else {
-                    result[key] = value
-                }
-            }
-            return result
-        }
-
-        if let array = object as? [Any] {
-            return array.compactMap { redactSensitiveValues(in: $0) }
-        }
-
-        return object
-    }
-    
     // MARK: - Request Forwarding
 
     private nonisolated func forwardRequest(

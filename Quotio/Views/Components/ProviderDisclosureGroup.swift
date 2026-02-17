@@ -60,7 +60,7 @@ struct ProviderDisclosureGroup: View {
     // MARK: - Provider Header
     
     private var providerHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             // Provider icon
             ProviderIcon(provider: provider, size: 20)
             
@@ -73,7 +73,7 @@ struct ProviderDisclosureGroup: View {
                 .font(.caption2)
                 .fontWeight(.semibold)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.vertical, 4)
                 .background(Color.secondary.opacity(0.12))
                 .foregroundStyle(.secondary)
                 .clipShape(Capsule())
@@ -87,7 +87,7 @@ struct ProviderDisclosureGroup: View {
                         .fontWeight(.semibold)
                 }
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                     .background(Color.semanticWarning.opacity(0.15))
                     .foregroundStyle(Color.semanticWarning)
                     .clipShape(Capsule())
@@ -103,7 +103,7 @@ struct ProviderDisclosureGroup: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                     .background(Color.secondary.opacity(0.1))
                     .clipShape(Capsule())
             }

@@ -7,9 +7,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct DashboardScreen: View {
-    @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(QuotaViewModel.self) var viewModel
     @AppStorage("hideGettingStarted") private var hideGettingStarted: Bool = false
-    @State private var modeManager = OperatingModeManager.shared
+    @State var modeManager = OperatingModeManager.shared
 
     @State private var selectedProvider: AIProvider?
     @State private var projectId: String = ""
@@ -17,6 +17,9 @@ struct DashboardScreen: View {
     @State private var selectedAgentForConfig: CLIAgent?
     @State private var sheetPresentationID = UUID()
     @State private var showTunnelSheet = false
+    @State private var feedbackMessage: String?
+    @State private var feedbackIsError = false
+    @State private var feedbackDismissTask: Task<Void, Never>?
     
     private var tunnelManager: TunnelManager { TunnelManager.shared }
     
@@ -119,10 +122,19 @@ struct DashboardScreen: View {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
+                        let previousError = normalizedErrorMessage(viewModel.errorMessage)
                         if modeManager.isLocalProxyMode && viewModel.proxyManager.proxyStatus.running {
                             await viewModel.refreshData()
                         } else {
                             await viewModel.refreshQuotasUnified()
+                        }
+                        if let actionError = latestActionError(previousError: previousError) {
+                            showFeedback(
+                                "dashboard.feedback.refreshFailed".localized(fallback: "刷新失败") + ": " + actionError,
+                                isError: true
+                            )
+                        } else {
+                            showFeedback("dashboard.feedback.refreshed".localized(fallback: "仪表盘已刷新"))
                         }
                     }
                 } label: {
@@ -157,15 +169,57 @@ struct DashboardScreen: View {
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
                 Task {
+                    let previousError = normalizedErrorMessage(viewModel.errorMessage)
                     await viewModel.importVertexServiceAccount(url: url)
                     await viewModel.refreshData()
+                    if let actionError = latestActionError(previousError: previousError) {
+                        showFeedback(
+                            "dashboard.feedback.importFailed".localized(fallback: "导入失败") + ": " + actionError,
+                            isError: true
+                        )
+                    } else {
+                        showFeedback("dashboard.feedback.imported".localized(fallback: "账号导入已完成"))
+                    }
                 }
+            } else if case .failure(let error) = result {
+                showFeedback(
+                    "dashboard.feedback.importFailed".localized(fallback: "导入失败") + ": " + error.localizedDescription,
+                    isError: true
+                )
             }
         }
         .task {
             if modeManager.isLocalProxyMode {
                 await viewModel.agentSetupViewModel.refreshAgentStatuses()
             }
+        }
+        .overlay(alignment: .top) {
+            if let feedbackMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
+                    Text(feedbackMessage)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
+                )
+                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
+                .padding(.top, 8)
+                .padding(.horizontal, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(feedbackMessage)
+            }
+        }
+        .onDisappear {
+            feedbackDismissTask?.cancel()
         }
     }
     
@@ -197,167 +251,6 @@ struct DashboardScreen: View {
             
             // Tracked Accounts
             trackedAccountsSection
-        }
-    }
-    
-    // MARK: - Remote Mode Content
-    
-    private var remoteModeContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            // Remote connection status banner
-            remoteConnectionStatusBanner
-            
-            // Show content based on connection status
-            switch modeManager.connectionStatus {
-            case .connected:
-                // Connected - show full dashboard similar to local mode
-                kpiSection
-                operationsCenterSection
-                providerSection
-                remoteEndpointSection
-            case .connecting:
-                // Connecting - show loading state
-                remoteConnectingView
-            case .disconnected, .error:
-                // Not connected - show reconnect prompt
-                remoteDisconnectedView
-            }
-        }
-    }
-    
-    private var remoteConnectionStatusBanner: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "network")
-                .font(.title2)
-                .foregroundStyle(connectionStatusColor)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("dashboard.remoteMode".localized())
-                    .font(.headline)
-                
-                if let config = modeManager.remoteConfig {
-                    Text(config.displayName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            
-            Spacer()
-            
-            connectionStatusBadge
-        }
-        .padding()
-        .background(connectionStatusColor.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-    
-    private var connectionStatusColor: Color {
-        switch modeManager.connectionStatus {
-        case .connected: return Color.semanticSuccess
-        case .connecting: return Color.semanticWarning
-        case .disconnected: return .gray
-        case .error: return Color.semanticDanger
-        }
-    }
-    
-    private var connectionStatusBadge: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(connectionStatusColor)
-                .frame(width: 8, height: 8)
-            
-            Text(connectionStatusText)
-                .font(.caption)
-                .fontWeight(.medium)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(connectionStatusColor.opacity(0.15))
-        .clipShape(Capsule())
-    }
-    
-    private var connectionStatusText: String {
-        switch modeManager.connectionStatus {
-        case .connected: return "status.connected".localized()
-        case .connecting: return "status.connecting".localized()
-        case .disconnected: return "status.disconnected".localized()
-        case .error: return "status.error".localized()
-        }
-    }
-    
-    private var remoteConnectingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-            
-            Text("dashboard.connectingToRemote".localized())
-                .font(.headline)
-            
-            if let config = modeManager.remoteConfig {
-                Text(config.endpointURL)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 200)
-    }
-    
-    private var remoteDisconnectedView: some View {
-        ContentUnavailableView {
-            Label("dashboard.remoteDisconnected".localized(), systemImage: "network.slash")
-        } description: {
-            if case .error(let message) = modeManager.connectionStatus {
-                Text(message)
-            } else {
-                Text("dashboard.remoteDisconnectedDesc".localized())
-            }
-        } actions: {
-            Button {
-                Task {
-                    await viewModel.reconnectRemote()
-                }
-            } label: {
-                Label("action.reconnect".localized(), systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, minHeight: 200)
-    }
-    
-    private var remoteEndpointSection: some View {
-        GroupBox {
-            HStack {
-                if let config = modeManager.remoteConfig {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(config.endpointURL)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                        
-                        if let lastConnected = config.lastConnected {
-                            Text("dashboard.lastConnected".localized() + ": " + lastConnected.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                Button {
-                    if let url = modeManager.remoteConfig?.endpointURL {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(url, forType: .string)
-                    }
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("action.copy".localized())
-                .help("action.copy".localized())
-            }
-        } label: {
-            Label("dashboard.remoteEndpoint".localized(), systemImage: "link")
         }
     }
     
@@ -421,7 +314,7 @@ struct DashboardScreen: View {
                     .disabled(viewModel.isLoadingQuotas)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
+                .padding(.vertical, 24)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     // Sort providers for stable iteration order (ForEach performance fix)
@@ -463,7 +356,7 @@ struct DashboardScreen: View {
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
+                .padding(.vertical, 24)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     // Use precomputed groupedDirectAuthFiles instead of inline Dictionary(grouping:)
@@ -481,7 +374,7 @@ struct DashboardScreen: View {
                                 Text("\(accounts.count)")
                                     .font(.caption)
                                     .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
+                                    .padding(.vertical, 4)
                                     .background(provider.color.opacity(0.15))
                                     .foregroundStyle(provider.color)
                                     .clipShape(Capsule())
@@ -513,8 +406,13 @@ struct DashboardScreen: View {
                     Task {
                         do {
                             try await viewModel.proxyManager.downloadAndInstallBinary()
+                            showFeedback("dashboard.feedback.installed".localized(fallback: "CLIProxyAPI 已安装"))
                         } catch {
                             viewModel.errorMessage = error.localizedDescription
+                            showFeedback(
+                                "dashboard.feedback.installFailed".localized(fallback: "安装失败") + ": " + error.localizedDescription,
+                                isError: true
+                            )
                         }
                     }
                 }
@@ -528,6 +426,41 @@ struct DashboardScreen: View {
             }
         }
         .frame(maxWidth: .infinity, minHeight: 300)
+    }
+
+    private func latestActionError(previousError: String?) -> String? {
+        guard let currentError = normalizedErrorMessage(viewModel.errorMessage) else {
+            return nil
+        }
+        if currentError == previousError {
+            return nil
+        }
+        return currentError
+    }
+
+    private func normalizedErrorMessage(_ message: String?) -> String? {
+        guard let text = message?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+
+    private func showFeedback(_ message: String, isError: Bool = false) {
+        feedbackDismissTask?.cancel()
+        feedbackIsError = isError
+        withAnimation(.easeOut(duration: 0.2)) {
+            feedbackMessage = message
+        }
+
+        feedbackDismissTask = Task {
+            try? await Task.sleep(for: .seconds(2.4))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.2)) {
+                    feedbackMessage = nil
+                }
+            }
+        }
     }
     
     // MARK: - Start Proxy
@@ -572,6 +505,7 @@ struct DashboardScreen: View {
                 }
                 .buttonStyle(.plain)
                 .help("action.dismiss".localized())
+                .accessibilityLabel("action.dismiss".localized())
             }
         }
     }
@@ -644,7 +578,7 @@ struct DashboardScreen: View {
     
     // MARK: - KPI Section
     
-    private var kpiSection: some View {
+    var kpiSection: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 16)], spacing: 16) {
             KPICard(
                 title: "dashboard.accounts".localized(),
@@ -680,9 +614,9 @@ struct DashboardScreen: View {
         }
     }
 
-    private var operationsCenterSection: some View {
+    var operationsCenterSection: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("dashboard.operationsCenter.title".localized(fallback: "指挥中心"), systemImage: "dot.radiowaves.up.forward")
                         .font(.headline)
@@ -736,7 +670,7 @@ struct DashboardScreen: View {
     
     // MARK: - Provider Section
     
-    private var providerSection: some View {
+    var providerSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 FlowLayout(spacing: 8) {
@@ -792,367 +726,19 @@ struct DashboardScreen: View {
     }
 
     private var endpointSection: some View {
-        GroupBox {
-            HStack {
-                Text(displayEndpoint)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-
-                Spacer()
-
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(displayEndpoint, forType: .string)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("action.copy".localized())
-                .help("action.copy".localized())
-            }
-        } label: {
-            Label("dashboard.apiEndpoint".localized(), systemImage: "link")
-        }
+        DashboardEndpointSection(endpoint: displayEndpoint)
     }
     
     // MARK: - Tunnel Section
     
     private var tunnelSection: some View {
-        GroupBox {
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.semanticInfo.opacity(0.15), Color.semanticAccentSecondary.opacity(0.1)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 48, height: 48)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
-                        )
-                    
-                    Image(systemName: "globe")
-                        .font(.system(size: 24))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.semanticInfo, Color.semanticAccentSecondary],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: Color.semanticInfo.opacity(0.3), radius: 4, x: 0, y: 2)
-                }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("tunnel.section.title".localized())
-                            .font(.headline)
-                        
-                        TunnelStatusBadge(status: tunnelManager.tunnelState.status, compact: true)
-                    }
-                    
-                    if tunnelManager.tunnelState.isActive, let url = tunnelManager.tunnelState.publicURL {
-                        Text(url)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .monospaced()
-                    } else {
-                        Text("tunnel.section.description".localized())
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                
-                Spacer()
-                
-                if tunnelManager.tunnelState.isActive {
-                    Button {
-                        tunnelManager.copyURLToClipboard()
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .accessibilityLabel("action.copy".localized())
-                    .help("action.copy".localized())
-                }
-                
-                Button {
-                    showTunnelSheet = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .accessibilityLabel("settings.config".localized())
-                    .help("settings.config".localized())
-            }
-        } label: {
-            Label("tunnel.section.label".localized(), systemImage: "network")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+        DashboardTunnelSection(
+            tunnelManager: tunnelManager,
+            showTunnelSheet: $showTunnelSheet
+        )
         .sheet(isPresented: $showTunnelSheet) {
             TunnelSheet()
                 .environment(viewModel)
         }
-    }
-}
-
-// MARK: - Getting Started Step
-
-struct GettingStartedStep: Identifiable {
-    let id: String
-    let icon: String
-    let title: String
-    let description: String
-    let isCompleted: Bool
-    let actionLabel: String?
-}
-
-struct GettingStartedStepRow: View {
-    let step: GettingStartedStep
-    let onAction: () -> Void
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(step.isCompleted ? Color.semanticSuccess : Color.accentColor.opacity(0.15))
-                    .frame(width: 40, height: 40)
-                
-                if step.isCompleted {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
-                } else {
-                    Image(systemName: step.icon)
-                        .font(.system(size: 16))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(step.title)
-                        .font(.headline)
-                    
-                    if step.isCompleted {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color.semanticSuccess)
-                            .font(.caption)
-                    }
-                }
-                
-                Text(step.description)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            if let actionLabel = step.actionLabel {
-                Button(actionLabel) {
-                    onAction()
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            }
-        }
-        .padding(.vertical, 8)
-    }
-}
-
-// MARK: - KPI Card
-
-struct KPICard: View {
-    let title: String
-    let value: String
-    let subtitle: String
-    let icon: String
-    let color: Color
-    
-    var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(value)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(color)
-                
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            Label(title, systemImage: icon)
-                .foregroundStyle(color)
-        }
-    }
-}
-
-// MARK: - Provider Chip
-
-struct ProviderChip: View {
-    let provider: AIProvider
-    let count: Int
-    
-    var body: some View {
-        HStack(spacing: 6) {
-            ProviderIcon(provider: provider, size: 16)
-            Text(provider.displayName)
-            if count > 1 {
-                Text("×\(count)")
-                    .fontWeight(.semibold)
-            }
-        }
-        .font(.caption)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(provider.color.opacity(0.15))
-        .foregroundStyle(provider.color)
-        .clipShape(Capsule())
-    }
-}
-
-// MARK: - Provider Chip With Add Button (for connected providers)
-
-struct ProviderChipWithAdd: View {
-    let provider: AIProvider
-    let count: Int
-    @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    
-    var body: some View {
-        HStack(spacing: 6) {
-            ProviderIcon(provider: provider, size: 16)
-            Text(provider.displayName)
-            if count > 0 {
-                Text("×\(count)")
-                    .fontWeight(.semibold)
-            }
-            // Show "+" icon on hover or always show a subtle indicator
-            Image(systemName: "plus.circle.fill")
-                .font(.caption2)
-                .foregroundStyle(isHovering ? provider.color : provider.color.opacity(0.5))
-        }
-        .font(.caption)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(provider.color.opacity(isHovering ? 0.25 : 0.15))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(provider.color.opacity(isHovering ? 0.5 : 0), lineWidth: 1)
-        )
-        .foregroundStyle(provider.color)
-        .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
-                isHovering = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Flow Layout
-
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-    
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = layout(proposal: proposal, subviews: subviews)
-        return result.size
-    }
-    
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = layout(proposal: proposal, subviews: subviews)
-        for (index, subview) in subviews.enumerated() {
-            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x, y: bounds.minY + result.positions[index].y), proposal: .unspecified)
-        }
-    }
-    
-    private func layout(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        var positions: [CGPoint] = []
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        let maxWidth = proposal.width ?? .infinity
-        
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            
-            if currentX + size.width > maxWidth && currentX > 0 {
-                currentX = 0
-                currentY += lineHeight + spacing
-                lineHeight = 0
-            }
-            
-            positions.append(CGPoint(x: currentX, y: currentY))
-            currentX += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-        }
-        
-        return (CGSize(width: maxWidth, height: currentY + lineHeight), positions)
-    }
-}
-
-// MARK: - Quota Provider Row (for Quota-Only Mode Dashboard)
-
-struct QuotaProviderRow: View {
-    let provider: AIProvider
-    let accounts: [String: ProviderQuotaData]
-    
-    private var lowestQuota: Double {
-        accounts.values.flatMap { $0.models }.map { $0.percentage }.min() ?? 100
-    }
-    
-    private var quotaColor: Color {
-        if lowestQuota > 50 { return Color.semanticSuccess }
-        if lowestQuota > 20 { return Color.semanticWarning }
-        return Color.semanticDanger
-    }
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            ProviderIcon(provider: provider, size: 24)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(provider.displayName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Text("\(accounts.count) " + "quota.accounts".localized())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            // Lowest quota indicator
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(quotaColor)
-                    .frame(width: 8, height: 8)
-                
-                Text(String(format: "%.0f%%", lowestQuota))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(quotaColor)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(quotaColor.opacity(0.1))
-            .clipShape(Capsule())
-        }
-        .padding(.vertical, 6)
     }
 }

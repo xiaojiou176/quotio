@@ -468,7 +468,7 @@ private struct ProviderFilterButton: View {
                     .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .rounded))
             }
             .foregroundStyle(isSelected ? .primary : .secondary)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 Capsule()
@@ -535,7 +535,7 @@ private struct MenuNetworkInfoView: View {
             // Proxy Row
             HStack(spacing: 8) {
                 Circle()
-                    .fill(isProxyRunning ? Color.green : Color.gray)
+                    .fill(isProxyRunning ? Color.semanticSuccess : Color.secondary)
                     .frame(width: 6, height: 6)
 
                 Text("providers.source.proxy".localized())
@@ -563,7 +563,7 @@ private struct MenuNetworkInfoView: View {
                 Button(action: onProxyToggle) {
                     Image(systemName: isProxyRunning ? "stop.fill" : "play.fill")
                         .font(.system(size: 9))
-                        .foregroundStyle(isProxyRunning ? .red : .green)
+                        .foregroundStyle(isProxyRunning ? Color.semanticDanger : Color.semanticSuccess)
                 }
                 .buttonStyle(.plain)
             }
@@ -572,7 +572,7 @@ private struct MenuNetworkInfoView: View {
             if isProxyRunning {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(tunnelStatus == .active ? Color.blue : Color.gray)
+                        .fill(tunnelStatus == .active ? Color.semanticInfo : Color.secondary)
                         .frame(width: 6, height: 6)
 
                     Text(tunnelStatus == .active ? "tunnel.action.stop".localized() : "tunnel.action.start".localized())
@@ -582,7 +582,7 @@ private struct MenuNetworkInfoView: View {
                     if tunnelStatus == .active, let url = tunnelURL {
                         Text(url.replacingOccurrences(of: "https://", with: ""))
                             .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(Color.semanticInfo)
                             .lineLimit(1)
                             .truncationMode(.middle)
 
@@ -604,14 +604,14 @@ private struct MenuNetworkInfoView: View {
                     Button(action: onTunnelToggle) {
                         Image(systemName: tunnelStatus == .active || tunnelStatus == .starting ? "stop.fill" : "play.fill")
                             .font(.system(size: 9))
-                            .foregroundStyle(tunnelStatus == .active ? .red : .blue)
+                            .foregroundStyle(tunnelStatus == .active ? Color.semanticDanger : Color.semanticInfo)
                     }
                     .buttonStyle(.plain)
                     .disabled(tunnelStatus == .starting || tunnelStatus == .stopping)
                 }
             }
         }
-        .padding(10)
+        .padding(12)
         .background(Color.secondary.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 12)
@@ -645,7 +645,7 @@ private struct MenuNetworkInfoView: View {
         Button(action: action) {
             Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc")
                 .font(.system(size: 10))
-                .foregroundStyle(isCopied ? .green : .secondary)
+                .foregroundStyle(isCopied ? Color.semanticSuccess : .secondary)
                 .scaleEffect(isCopied ? 1.05 : 1)
                 .animation(.easeInOut(duration: 0.2), value: isCopied)
         }
@@ -808,7 +808,7 @@ private struct MenuAccountCardView: View {
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(config.textColor)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 4)
                     .background(config.bgColor)
                     .clipShape(Capsule())
             }
@@ -817,13 +817,13 @@ private struct MenuAccountCardView: View {
             if isActiveInIDE {
                 Text("antigravity.active".localized())
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.semanticSuccess)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.green.opacity(0.12))
+                    .padding(.vertical, 4)
+                    .background(Color.semanticSuccess.opacity(0.12))
                     .overlay(
                         Capsule()
-                            .strokeBorder(Color.green.opacity(0.25), lineWidth: 1)
+                            .strokeBorder(Color.semanticSuccess.opacity(0.25), lineWidth: 1)
                     )
                     .clipShape(Capsule())
             } else if let onUse = onUseAccount {
@@ -845,7 +845,7 @@ private struct MenuAccountCardView: View {
                     }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 4)
                     .background(isUseHovered ? Color.secondary.opacity(0.12) : Color.secondary.opacity(0.06))
                     .overlay(
                         Capsule()
@@ -1086,7 +1086,7 @@ private struct LowestBarLayout: View {
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                                 .foregroundStyle(menuStatusColor(remainingPercent: model.percentage, displayMode: displayMode))
                         }
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 4)
                     }
                 }
             }
@@ -1245,7 +1245,7 @@ private struct PercentageBadge: View {
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(color)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.vertical, 4)
                 .background(color.opacity(0.1))
                 .clipShape(Capsule())
         case .textOnly:
@@ -1349,7 +1349,7 @@ private struct MenuViewMoreAccountsView: View {
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 4)
                         .background(Color.secondary.opacity(0.08))
                         .clipShape(Capsule())
                         .opacity(isExpanded ? 0 : 1)

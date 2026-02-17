@@ -17,6 +17,9 @@ struct FallbackScreen: View {
     @State private var previousFallbackEnabled: Bool?
     @State private var modelCatalogState: ModelCatalogState = .idle
     @State private var modelCatalogErrorMessage: String?
+    @State private var feedbackMessage: String?
+    @State private var feedbackIsError = false
+    @State private var feedbackDismissTask: Task<Void, Never>?
 
     private enum ModelCatalogState: Equatable {
         case idle
@@ -70,6 +73,10 @@ struct FallbackScreen: View {
                 onSave: { name in
                     if fallbackSettings.addVirtualModel(name: name) == nil {
                         showDuplicateNameAlert = true
+                    } else {
+                        showFeedback(
+                            "fallback.feedback.virtualModelCreated".localized(fallback: "虚拟模型已创建") + ": " + name
+                        )
                     }
                 },
                 onDismiss: {
@@ -83,6 +90,10 @@ struct FallbackScreen: View {
                 onSave: { name in
                     if !fallbackSettings.renameVirtualModel(id: model.id, newName: name) {
                         showDuplicateNameAlert = true
+                    } else {
+                        showFeedback(
+                            "fallback.feedback.virtualModelRenamed".localized(fallback: "虚拟模型已重命名") + ": " + name
+                        )
                     }
                 },
                 onDismiss: {
@@ -99,6 +110,9 @@ struct FallbackScreen: View {
                 availableModels: availableModels,
                 onAdd: { provider, modelName in
                     fallbackSettings.addFallbackEntry(to: modelId, provider: provider, modelName: modelName)
+                    showFeedback(
+                        "fallback.feedback.entryAdded".localized(fallback: "回退规则已添加") + ": " + provider.displayName + " / " + modelName
+                    )
                 },
                 onDismiss: {
                     addingEntryToModelId = nil
@@ -120,6 +134,34 @@ struct FallbackScreen: View {
             Button("action.ok".localized(), role: .cancel) {}
         } message: {
             Text("fallback.duplicateNameMessage".localized())
+        }
+        .overlay(alignment: .top) {
+            if let feedbackMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
+                    Text(feedbackMessage)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
+                )
+                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
+                .padding(.top, 8)
+                .padding(.horizontal, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(feedbackMessage)
+            }
+        }
+        .onDisappear {
+            feedbackDismissTask?.cancel()
         }
     }
 
@@ -183,13 +225,24 @@ struct FallbackScreen: View {
                 get: { fallbackSettings.configuration.isEnabled },
                 set: { newValue in
                     // Only allow enabling if Bridge Mode is enabled
-                    guard isBridgeModeEnabled || !newValue else { return }
+                    guard isBridgeModeEnabled || !newValue else {
+                        showFeedback(
+                            "fallback.bridgeModeRequiredDesc".localized(fallback: "请先启用 Bridge Mode 后再开启回退策略。"),
+                            isError: true
+                        )
+                        return
+                    }
 
                     let oldValue = fallbackSettings.configuration.isEnabled
                     fallbackSettings.configuration.isEnabled = newValue
                     // Show reconfigure alert when toggle changes
                     if oldValue != newValue {
                         showReconfigureAlert = true
+                        showFeedback(
+                            newValue
+                                ? "fallback.feedback.enabled".localized(fallback: "回退策略已启用")
+                                : "fallback.feedback.disabled".localized(fallback: "回退策略已禁用")
+                        )
                     }
                 }
             )) {
@@ -235,7 +288,7 @@ struct FallbackScreen: View {
         Section {
             switch modelCatalogState {
             case .idle, .loading:
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     ProgressView()
                         .controlSize(.small)
                     VStack(alignment: .leading, spacing: 2) {
@@ -247,9 +300,9 @@ struct FallbackScreen: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 4)
             case .disabled:
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     Image(systemName: "pause.circle.fill")
                         .foregroundStyle(Color.semanticWarning)
                     VStack(alignment: .leading, spacing: 2) {
@@ -261,10 +314,10 @@ struct FallbackScreen: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 4)
             case .empty:
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         Image(systemName: "tray")
                             .foregroundStyle(Color.semanticWarning)
                         VStack(alignment: .leading, spacing: 2) {
@@ -284,7 +337,7 @@ struct FallbackScreen: View {
                 }
             case .error:
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(Color.semanticDanger)
                         VStack(alignment: .leading, spacing: 2) {
@@ -304,7 +357,7 @@ struct FallbackScreen: View {
                 }
             case .success(let count, let fallbackData):
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(Color.semanticSuccess)
                         VStack(alignment: .leading, spacing: 2) {
@@ -328,7 +381,7 @@ struct FallbackScreen: View {
                             .foregroundStyle(Color.semanticWarning)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 4)
             }
         } header: {
             Label("fallback.modelCatalog".localized(fallback: "模型目录"), systemImage: "square.stack.3d.up")
@@ -380,7 +433,11 @@ struct FallbackScreen: View {
 
             // Clear all button
             Button(role: .destructive) {
+                let clearedCount = fallbackSettings.activeRouteStates.count
                 fallbackSettings.clearAllRouteStates()
+                showFeedback(
+                    "fallback.feedback.routesCleared".localized(fallback: "活动路由状态已清空") + " (\(clearedCount))"
+                )
             } label: {
                 Label("fallback.clearRouteStates".localized(), systemImage: "arrow.counterclockwise")
                     .font(.subheadline)
@@ -392,7 +449,7 @@ struct FallbackScreen: View {
                 Text("\(fallbackSettings.activeRouteStates.count)")
                     .font(.caption2.bold())
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                     .background(Color.semanticWarningFill)
                     .clipShape(Capsule())
             }
@@ -421,22 +478,41 @@ struct FallbackScreen: View {
                         model: model,
                         isGlobalEnabled: fallbackSettings.isEnabled,
                         onToggle: {
+                            let wasEnabled = model.isEnabled
                             fallbackSettings.toggleVirtualModel(id: model.id)
+                            if wasEnabled {
+                                showFeedback(
+                                    "fallback.feedback.virtualModelDisabled".localized(fallback: "虚拟模型已禁用") + ": " + model.name
+                                )
+                            } else {
+                                showFeedback(
+                                    "fallback.feedback.virtualModelEnabled".localized(fallback: "虚拟模型已启用") + ": " + model.name
+                                )
+                            }
                         },
                         onEdit: {
                             editingVirtualModel = model
                         },
                         onDelete: {
                             fallbackSettings.removeVirtualModel(id: model.id)
+                            showFeedback(
+                                "fallback.feedback.virtualModelDeleted".localized(fallback: "虚拟模型已删除") + ": " + model.name
+                            )
                         },
                         onAddEntry: {
                             addingEntryToModelId = model.id
                         },
                         onDeleteEntry: { entryId in
                             fallbackSettings.removeFallbackEntry(from: model.id, entryId: entryId)
+                            showFeedback(
+                                "fallback.feedback.entryDeleted".localized(fallback: "回退规则已删除")
+                            )
                         },
                         onMoveEntry: { source, destination in
                             fallbackSettings.moveFallbackEntry(in: model.id, from: source, to: destination)
+                            showFeedback(
+                                "fallback.feedback.entryReordered".localized(fallback: "回退规则顺序已更新")
+                            )
                         }
                     )
                 }
@@ -450,7 +526,7 @@ struct FallbackScreen: View {
                     Text("\(fallbackSettings.virtualModels.count)")
                         .font(.caption2.bold())
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 4)
                         .background(Color.secondary.opacity(0.2))
                         .clipShape(Capsule())
                 }
@@ -459,6 +535,24 @@ struct FallbackScreen: View {
             Text("fallback.virtualModelsFooter".localized())
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func showFeedback(_ message: String, isError: Bool = false) {
+        feedbackDismissTask?.cancel()
+        feedbackIsError = isError
+        withAnimation(.easeOut(duration: 0.2)) {
+            feedbackMessage = message
+        }
+
+        feedbackDismissTask = Task {
+            try? await Task.sleep(for: .seconds(2.4))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.2)) {
+                    feedbackMessage = nil
+                }
+            }
         }
     }
 }
@@ -568,7 +662,7 @@ struct VirtualModelRow: View {
                             Text("fallback.disabled".localized())
                                 .font(.caption2)
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
+                                .padding(.vertical, 4)
                                 .background(Color.secondary.opacity(0.2))
                                 .foregroundStyle(.secondary)
                                 .clipShape(Capsule())

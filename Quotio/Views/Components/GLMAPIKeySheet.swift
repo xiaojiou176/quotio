@@ -36,11 +36,11 @@ struct GLMAPIKeySheet: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     apiKeySection
                     endpointSection
                 }
-                .padding(20)
+                .padding(24)
             }
 
             Divider()
@@ -91,7 +91,7 @@ struct GLMAPIKeySheet: View {
             .accessibilityLabel("action.close".localized())
             .help("action.close".localized())
         }
-        .padding(20)
+        .padding(24)
     }
 
     // MARK: - API Key Section
@@ -162,7 +162,7 @@ struct GLMAPIKeySheet: View {
             .keyboardShortcut(.return, modifiers: .command)
             .buttonStyle(.borderedProminent)
         }
-        .padding(20)
+        .padding(24)
     }
 
     // MARK: - Actions
@@ -231,7 +231,5 @@ enum GLMEndpoint: String, CaseIterable, Codable, Identifiable, Sendable {
 // MARK: - Preview
 
 #Preview {
-    GLMAPIKeySheet(provider: nil) { provider in
-        print("Saved: \(provider.name)")
-    }
+    GLMAPIKeySheet(provider: nil) { _ in }
 }

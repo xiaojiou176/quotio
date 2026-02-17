@@ -3,7 +3,7 @@ name: Agentlens
 on:
   push:
     branches:
-      - master
+      - main
     paths-ignore:
       - '.agentlens/**'
       - '*.md'

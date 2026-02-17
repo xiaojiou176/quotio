@@ -65,7 +65,7 @@ private struct SmallProgressIndicator: NSViewRepresentable {
 }
 
 #Preview {
-    HStack(spacing: 20) {
+    HStack(spacing: 24) {
         VStack {
             SmallProgressView()
             Text("Default (16)")

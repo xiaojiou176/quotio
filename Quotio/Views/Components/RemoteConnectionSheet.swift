@@ -44,7 +44,7 @@ struct RemoteConnectionSheet: View {
             Divider()
             
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     connectionSection
                     authenticationSection
                     advancedSection
@@ -53,7 +53,7 @@ struct RemoteConnectionSheet: View {
                         testResultSection(result)
                     }
                 }
-                .padding(20)
+                .padding(24)
             }
             
             Divider()
@@ -106,7 +106,7 @@ struct RemoteConnectionSheet: View {
             .accessibilityLabel("action.close".localized())
             .help("action.close".localized())
         }
-        .padding(20)
+        .padding(24)
     }
     
     // MARK: - Connection Section
@@ -271,7 +271,7 @@ struct RemoteConnectionSheet: View {
             .keyboardShortcut(.defaultAction)
             .disabled(!canSave)
         }
-        .padding(20)
+        .padding(24)
     }
     
     // MARK: - Actions

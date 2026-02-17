@@ -13,9 +13,9 @@ struct ExperimentalBadge: View {
         Text("badge.experimental".localized())
             .font(.caption2)
             .fontWeight(.medium)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.semanticOnAccent)
             .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
             .background(
                 Capsule()
                     .fill(Color.semanticWarning.gradient)

@@ -45,7 +45,7 @@ struct CurrentModeBadge: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(backgroundView)
             .clipShape(RoundedRectangle(cornerRadius: 8))

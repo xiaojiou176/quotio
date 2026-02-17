@@ -75,7 +75,7 @@ struct ProxyRequiredView: View {
                 HStack(spacing: 8) {
                     if isStarting {
                         SmallProgressView()
-                            .tint(.white)
+                            .tint(Color.semanticOnAccent)
                     } else {
                         Image(systemName: "play.fill")
                     }
@@ -89,7 +89,7 @@ struct ProxyRequiredView: View {
             .disabled(isStarting)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
+        .padding(32)
     }
 }
 

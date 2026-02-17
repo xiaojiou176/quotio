@@ -8,6 +8,11 @@
 import Foundation
 import SwiftUI
 
+private nonisolated func localizedStatic(_ key: String, fallback: String) -> String {
+    let value = key.localizedStatic()
+    return value == key ? fallback : value
+}
+
 // MARK: - Connection Mode
 
 /// Represents how Quotio connects to CLIProxyAPI
@@ -19,17 +24,17 @@ enum ConnectionMode: String, Codable, CaseIterable, Identifiable, Sendable {
     
     var displayName: String {
         switch self {
-        case .local: return "Local"
-        case .remote: return "Remote"
+        case .local: return localizedStatic("connection.mode.local", fallback: "Local")
+        case .remote: return localizedStatic("connection.mode.remote", fallback: "Remote")
         }
     }
     
     var description: String {
         switch self {
         case .local:
-            return "Connect to local CLIProxyAPI on this machine"
+            return localizedStatic("connection.mode.local.description", fallback: "Connect to local CLIProxyAPI on this machine")
         case .remote:
-            return "Connect to a remote CLIProxyAPI server"
+            return localizedStatic("connection.mode.remote.description", fallback: "Connect to a remote CLIProxyAPI server")
         }
     }
     
@@ -45,19 +50,19 @@ enum ConnectionMode: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .local:
             return [
-                "Start/stop proxy server",
-                "Configure proxy port and paths",
-                "Auto-upgrade proxy binary",
-                "Full OAuth authentication",
-                "Configure CLI agents"
+                localizedStatic("connection.mode.local.feature.proxyControl", fallback: "Start/stop proxy server"),
+                localizedStatic("connection.mode.local.feature.proxyConfig", fallback: "Configure proxy port and paths"),
+                localizedStatic("connection.mode.local.feature.autoUpgrade", fallback: "Auto-upgrade proxy binary"),
+                localizedStatic("connection.mode.local.feature.oauth", fallback: "Full OAuth authentication"),
+                localizedStatic("connection.mode.local.feature.cliAgents", fallback: "Configure CLI agents")
             ]
         case .remote:
             return [
-                "Connect to remote CLIProxyAPI",
-                "View and manage accounts",
-                "Track quota usage",
-                "OAuth for web-based providers",
-                "No local proxy required"
+                localizedStatic("connection.mode.remote.feature.connect", fallback: "Connect to remote CLIProxyAPI"),
+                localizedStatic("connection.mode.remote.feature.accounts", fallback: "View and manage accounts"),
+                localizedStatic("connection.mode.remote.feature.quota", fallback: "Track quota usage"),
+                localizedStatic("connection.mode.remote.feature.oauth", fallback: "OAuth for web-based providers"),
+                localizedStatic("connection.mode.remote.feature.noLocalProxy", fallback: "No local proxy required")
             ]
         }
     }
@@ -189,15 +194,15 @@ enum RemoteURLValidationResult: Equatable, Sendable {
         case .valid:
             return nil
         case .empty:
-            return "Please enter a remote endpoint URL"
+            return localizedStatic("remote.error.emptyMessage", fallback: "Please enter a remote endpoint URL")
         case .invalidScheme:
-            return "URL must start with http:// or https://"
+            return localizedStatic("remote.error.invalidSchemeMessage", fallback: "URL must start with http:// or https://")
         case .invalidURL:
-            return "Invalid URL format"
+            return localizedStatic("remote.error.invalidURLMessage", fallback: "Invalid URL format")
         case .missingHost:
-            return "URL must include a host address"
+            return localizedStatic("remote.error.missingHostMessage", fallback: "URL must include a host address")
         case .localhostNotAllowed:
-            return "Use Local mode for localhost connections"
+            return localizedStatic("remote.error.localhostNotAllowedMessage", fallback: "Use Local mode for localhost connections")
         }
     }
 }

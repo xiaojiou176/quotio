@@ -8,24 +8,30 @@
 
 import SwiftUI
 import Charts
-import UniformTypeIdentifiers
 
 struct UsageStatsScreen: View {
-    @Environment(QuotaViewModel.self) private var viewModel
-    @State private var featureFlags = FeatureFlagManager.shared
-    @State private var uiMetrics = UIBaselineMetricsTracker.shared
-    @State private var usageStats: UsageStats?
-    @State private var requestHistory: [RequestHistoryItem] = []
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var selectedTimeRange: TimeRange = .day
-    @State private var selectedTab: StatsTab = .overview
-    @State private var historySearchText = ""
-    @State private var historySuccessFilter: Bool? = nil
-    @State private var sseEvents: [SSERequestEvent] = []
-    @State private var isSSEConnected = false
-    @State private var isRealtimePaused = false
-    @State private var realtimeAutoScroll = true
+    @Environment(QuotaViewModel.self) var viewModel
+    @State var featureFlags = FeatureFlagManager.shared
+    @State var uiMetrics = UIBaselineMetricsTracker.shared
+    @State var usageStats: UsageStats?
+    @State var requestHistory: [RequestHistoryItem] = []
+    @State var isLoading = false
+    @State var errorMessage: String?
+    @State var selectedTimeRange: TimeRange = .day
+    @State var selectedTab: StatsTab = .overview
+    @State var historySearchText = ""
+    @State var historySuccessFilter: Bool? = nil
+    @State var sseEvents: [SSERequestEvent] = []
+    @State var sseEventKeys: Set<String> = []
+    @State var lastSeenSSESeq: Int64 = 0
+    @State var isSSEConnected = false
+    @State var isRealtimePaused = false
+    @State var realtimeAutoScroll = true
+    @State var isSSEStreamActive = false
+    @State var pollingTask: Task<Void, Never>?
+    @State var feedbackMessage: String?
+    @State var feedbackIsError = false
+    @State var feedbackDismissTask: Task<Void, Never>?
     
     enum TimeRange: String, CaseIterable {
         case hour = "1h"
@@ -118,12 +124,40 @@ struct UsageStatsScreen: View {
             }
         }
         .navigationTitle("nav.usageStats".localized(fallback: "使用统计"))
+        .overlay(alignment: .top) {
+            if let feedbackMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
+                    Text(feedbackMessage)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
+                )
+                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
+                .padding(.top, 8)
+                .padding(.horizontal, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(feedbackMessage)
+            }
+        }
         .toolbar {
             toolbarContent
         }
         .task {
             await loadStats()
             startPolling()
+        }
+        .onDisappear {
+            stopPolling()
         }
     }
     
@@ -325,6 +359,11 @@ struct UsageStatsScreen: View {
                 Text("\(sseEvents.count) "+"stats.events".localized(fallback: "事件"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if lastSeenSSESeq > 0 {
+                    Text("seq \(lastSeenSSESeq)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("stats.realtimeAutoScroll".localized(fallback: "实时滚动"), isOn: $realtimeAutoScroll)
                     .toggleStyle(.switch)
                     .controlSize(.small)
@@ -336,6 +375,8 @@ struct UsageStatsScreen: View {
                 .controlSize(.small)
                 Button("action.clear".localized(fallback: "清空")) {
                     sseEvents.removeAll()
+                    sseEventKeys.removeAll()
+                    lastSeenSSESeq = 0
                 }
                 .buttonStyle(.borderless)
             }
@@ -353,7 +394,7 @@ struct UsageStatsScreen: View {
                     Text("stats.eventsWillAppear".localized(fallback: "实时事件将在此显示"))
                 }
             } else {
-                List(realtimeDisplayEvents, id: \.timestamp) { event in
+                List(realtimeDisplayEvents, id: \.dedupeKey) { event in
                     SSEEventRow(event: event) {
                         focusOnRealtimeEvent(event)
                     }
@@ -371,7 +412,7 @@ struct UsageStatsScreen: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup {
             Button {
-                Task { await loadStats() }
+                Task { await manualRefreshStats() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -384,7 +425,7 @@ struct UsageStatsScreen: View {
                     Task { await exportStats() }
                 }
                 Button("stats.import".localized(fallback: "导入统计")) {
-                    // TODO: Implement import
+                    Task { await importStats() }
                 }
             } label: {
                 Image(systemName: "square.and.arrow.up")
@@ -394,597 +435,4 @@ struct UsageStatsScreen: View {
         }
     }
     
-    // MARK: - Data Loading
-    
-    private func loadStats() async {
-        uiMetrics.begin("usage.load_stats")
-        isLoading = true
-        errorMessage = nil
-        
-        guard let apiClient = viewModel.apiClient else {
-            await MainActor.run {
-                self.errorMessage = "stats.error.apiClientUnavailable".localized(fallback: "API client not available")
-                self.isLoading = false
-            }
-            return
-        }
-        
-        do {
-            async let statsTask = apiClient.fetchUsageStats()
-            async let historyTask = apiClient.fetchRequestHistory(limit: 50)
-            
-            let (stats, history) = try await (statsTask, historyTask)
-            await MainActor.run {
-                self.usageStats = stats
-                self.requestHistory = history.requests
-                self.isLoading = false
-            }
-            uiMetrics.end("usage.load_stats", metadata: "requests=\(history.requests.count)")
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-                self.isLoading = false
-            }
-            uiMetrics.end("usage.load_stats", metadata: "error")
-        }
-    }
-    
-    private func startPolling() {
-        Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
-                if selectedTab != .realtime {
-                    await loadStats()
-                }
-            }
-        }
-    }
-    
-    private func connectSSE() async {
-        guard let apiClient = viewModel.apiClient,
-              let url = await apiClient.getSSEStreamURL() else { return }
-        
-        var request = URLRequest(url: url)
-        let authKey = viewModel.proxyManager.managementKey
-        if !authKey.isEmpty {
-            request.setValue("Bearer \(authKey)", forHTTPHeaderField: "Authorization")
-        }
-        
-        // Note: Full SSE implementation would require URLSession streaming
-        // This is a simplified version that polls the history endpoint
-        isSSEConnected = true
-        
-        while !Task.isCancelled && selectedTab == .realtime {
-            do {
-                let history = try await apiClient.fetchRequestHistory(limit: 10)
-                await MainActor.run {
-                    guard !isRealtimePaused else { return }
-                    // Convert history items to SSE events for display
-                    for item in history.requests {
-                        let event = SSERequestEvent(
-                            type: item.success ? "request" : "error",
-                            timestamp: item.timestamp,
-                            requestId: item.requestId,
-                            provider: nil,
-                            model: item.model,
-                            authFile: item.authIndex,
-                            source: item.source,
-                            success: item.success,
-                            tokens: item.tokens,
-                            latencyMs: nil,
-                            error: nil
-                        )
-                        if !sseEvents.contains(where: { $0.timestamp == event.timestamp }) {
-                            sseEvents.append(event)
-                        }
-                    }
-                    // Keep only last 100 events
-                    if sseEvents.count > 100 {
-                        sseEvents = Array(sseEvents.suffix(100))
-                    }
-                }
-            } catch {
-                NSLog("[UsageStatsScreen] SSE polling error: \(error)")
-            }
-            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-        }
-        
-        isSSEConnected = false
-    }
-    
-    private func exportStats() async {
-        guard let apiClient = viewModel.apiClient else {
-            NSLog("[UsageStatsScreen] API client not available for export")
-            return
-        }
-        
-        do {
-            let data = try await apiClient.exportUsageStats()
-            
-            // Save to file
-            let panel = NSSavePanel()
-            panel.allowedContentTypes = [UTType.json]
-            panel.nameFieldStringValue = "usage-statistics-\(Date().ISO8601Format()).json"
-            
-            if panel.runModal() == .OK, let url = panel.url {
-                try data.write(to: url)
-            }
-        } catch {
-            NSLog("[UsageStatsScreen] Export failed: \(error)")
-        }
-    }
-    
-    private func extractModelStats() -> [ModelStatItem] {
-        guard let apis = usageStats?.usage?.apis else { return [] }
-        
-        var modelData: [String: (requests: Int, tokens: Int)] = [:]
-        
-        for (_, apiStats) in apis {
-            if let models = apiStats.models {
-                for (modelName, modelStats) in models {
-                    var existing = modelData[modelName] ?? (0, 0)
-                    existing.requests += modelStats.totalRequests ?? 0
-                    existing.tokens += modelStats.totalTokens ?? 0
-                    modelData[modelName] = existing
-                }
-            }
-        }
-        
-        return modelData.map { ModelStatItem(model: $0.key, requests: $0.value.requests, tokens: $0.value.tokens) }
-    }
-
-    private func extractAccountStats() -> [(account: String, stats: APIUsageSnapshot)] {
-        guard let apis = usageStats?.usage?.apis, !apis.isEmpty else { return [] }
-
-        struct ModelBucket {
-            var requests: Int = 0
-            var tokens: Int = 0
-        }
-
-        struct AccountBucket {
-            var totalRequests: Int = 0
-            var totalTokens: Int = 0
-            var models: [String: ModelBucket] = [:]
-        }
-
-        var buckets: [String: AccountBucket] = [:]
-
-        func add(_ account: String, model: String, requests: Int, tokens: Int) {
-            var accountBucket = buckets[account] ?? AccountBucket()
-            accountBucket.totalRequests += requests
-            accountBucket.totalTokens += tokens
-
-            var modelBucket = accountBucket.models[model] ?? ModelBucket()
-            modelBucket.requests += requests
-            modelBucket.tokens += tokens
-            accountBucket.models[model] = modelBucket
-
-            buckets[account] = accountBucket
-        }
-
-        for (apiKey, apiStats) in apis {
-            guard let models = apiStats.models, !models.isEmpty else { continue }
-
-            for (modelName, modelStats) in models {
-                if let details = modelStats.details, !details.isEmpty {
-                    for detail in details {
-                        let account = normalizedAccountIdentifier(
-                            authIndex: detail.authIndex,
-                            fallbackAPIKey: apiKey
-                        )
-                        add(
-                            account,
-                            model: modelName,
-                            requests: 1,
-                            tokens: detail.tokens?.totalTokens ?? 0
-                        )
-                    }
-                    continue
-                }
-
-                // Fallback for snapshots without request-level details.
-                let account = normalizedAccountIdentifier(authIndex: nil, fallbackAPIKey: apiKey)
-                add(
-                    account,
-                    model: modelName,
-                    requests: modelStats.totalRequests ?? 0,
-                    tokens: modelStats.totalTokens ?? 0
-                )
-            }
-        }
-
-        let result: [(account: String, stats: APIUsageSnapshot)] = buckets.map { account, bucket in
-            let models: [String: ModelUsageSnapshot] = bucket.models.mapValues { model in
-                ModelUsageSnapshot(
-                    totalRequests: model.requests,
-                    totalTokens: model.tokens,
-                    details: nil
-                )
-            }
-            let stats = APIUsageSnapshot(
-                totalRequests: bucket.totalRequests,
-                totalTokens: bucket.totalTokens,
-                models: models
-            )
-            return (account: account, stats: stats)
-        }
-
-        return result.sorted { ($0.stats.totalRequests ?? 0) > ($1.stats.totalRequests ?? 0) }
-    }
-
-    private func normalizedAccountIdentifier(authIndex: String?, fallbackAPIKey: String) -> String {
-        let trimmed = authIndex?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty {
-            return trimmed
-        }
-        return fallbackAPIKey
-    }
-
-    private var requestHistoryHeader: some View {
-        HStack(spacing: 12) {
-            Text("usage.stats.header.status".localized(fallback: "状态"))
-                .frame(width: 20, alignment: .leading)
-            Text("usage.stats.header.time".localized(fallback: "时间"))
-                .frame(width: 60, alignment: .leading)
-            Text("usage.stats.header.model".localized(fallback: "模型"))
-                .frame(width: 150, alignment: .leading)
-            Text("usage.stats.header.account".localized(fallback: "账号"))
-                .frame(width: 120, alignment: .leading)
-            Text("usage.stats.header.source".localized(fallback: "来源"))
-                .frame(width: 90, alignment: .leading)
-            Spacer()
-            Text("usage.stats.header.tokens".localized(fallback: "Token"))
-            Text("usage.stats.header.requestId".localized(fallback: "请求ID"))
-                .frame(width: 100, alignment: .trailing)
-        }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.bottom, 2)
-    }
-
-    private var realtimeDisplayEvents: [SSERequestEvent] {
-        realtimeAutoScroll ? Array(sseEvents.reversed()) : sseEvents
-    }
-
-    private var filteredRequestHistory: [RequestHistoryItem] {
-        requestHistory.filter { item in
-            if let success = historySuccessFilter, item.success != success {
-                return false
-            }
-
-            if !historySearchText.isEmpty {
-                let query = historySearchText.lowercased()
-                let modelMatch = item.model?.lowercased().contains(query) ?? false
-                let accountMatch = item.authIndex?.lowercased().contains(query) ?? false
-                let sourceMatch = item.source?.lowercased().contains(query) ?? false
-                let requestIdMatch = item.requestId?.lowercased().contains(query) ?? false
-                if !(modelMatch || accountMatch || sourceMatch || requestIdMatch) {
-                    return false
-                }
-            }
-
-            return true
-        }
-    }
-
-    private func focusOnRequestHistory(_ item: RequestHistoryItem) {
-        guard featureFlags.enhancedObservability else { return }
-        viewModel.setObservabilityFocus(
-            ObservabilityFocusFilter(
-                requestId: item.requestId,
-                model: item.model,
-                account: item.authIndex,
-                source: item.source,
-                timestamp: item.date,
-                origin: "usage.history"
-            )
-        )
-        uiMetrics.mark("usage.focus_to_logs", metadata: item.requestId ?? item.model ?? "unknown")
-        viewModel.currentPage = .logs
-    }
-
-    private func focusOnRealtimeEvent(_ event: SSERequestEvent) {
-        guard featureFlags.enhancedObservability else { return }
-        viewModel.setObservabilityFocus(
-            ObservabilityFocusFilter(
-                requestId: event.requestId,
-                model: event.model,
-                account: event.authFile,
-                source: event.source,
-                timestamp: event.date,
-                origin: "usage.realtime"
-            )
-        )
-        uiMetrics.mark("usage.realtime_focus_to_logs", metadata: event.requestId ?? event.model ?? event.type)
-        viewModel.currentPage = .logs
-    }
-}
-
-// MARK: - Supporting Views
-
-struct SummaryCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-    
-    var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: icon)
-                        .foregroundStyle(color)
-                    Spacer()
-                }
-                
-                Text(value)
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-struct RequestHistoryRow: View {
-    let item: RequestHistoryItem
-    var onFocus: (() -> Void)? = nil
-    @State private var copied = false
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Status indicator
-            Image(systemName: item.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(item.success ? Color.semanticSuccess : Color.semanticDanger)
-            
-            // Time
-            if let date = item.date {
-                Text(date, style: .time)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .leading)
-            }
-            
-            // Model
-            Text(item.model ?? "logs.status.unknown".localized(fallback: "未知"))
-                .font(.caption)
-                .lineLimit(1)
-                .frame(width: 150, alignment: .leading)
-            
-            // Account
-            if let authIndex = item.authIndex {
-                Text(authIndex)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(width: 120, alignment: .leading)
-            }
-
-            // Source
-            if let source = item.source {
-                Text(source)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(width: 90, alignment: .leading)
-            }
-            
-            Spacer()
-            
-            // Tokens
-            if let tokens = item.tokens {
-                Text("\(tokens)")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-
-            if item.requestId != nil {
-                HStack(spacing: 4) {
-                    Text("#" + String((item.requestId ?? "").prefix(8)))
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 76, alignment: .trailing)
-
-                    Button {
-                        guard let requestId = item.requestId else { return }
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(requestId, forType: .string)
-                        copied = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(1.2))
-                            copied = false
-                        }
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.caption2)
-                            .foregroundStyle(copied ? Color.semanticSuccess : .secondary)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("stats.requestId.copy.help".localized(fallback: "复制请求 ID"))
-                    .accessibilityLabel("stats.requestId.copy".localized(fallback: "复制请求 ID"))
-                }
-            }
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onFocus?()
-        }
-        .help("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
-        .accessibilityLabel("stats.requestHistoryRow".localized(fallback: "请求历史行"))
-        .accessibilityHint("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            onFocus?()
-        }
-    }
-}
-
-struct AccountStatsCard: View {
-    let account: String
-    let stats: APIUsageSnapshot
-    
-    var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "person.circle.fill")
-                        .foregroundStyle(Color.semanticInfo)
-                    Text(account)
-                        .font(.headline)
-                    Spacer()
-                    Text("\(stats.totalRequests ?? 0) "+"stats.requests".localized(fallback: "请求"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
-                Divider()
-                
-                if let models = stats.models, !models.isEmpty {
-                    ForEach(models.sorted(by: { ($0.value.totalRequests ?? 0) > ($1.value.totalRequests ?? 0) }), id: \.key) { model, modelStats in
-                        HStack {
-                            Text(model)
-                                .font(.caption)
-                            Spacer()
-                            Text("\(modelStats.totalRequests ?? 0) "+"stats.req".localized(fallback: "次"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\((modelStats.totalTokens ?? 0).formattedTokenCount)")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(Color.semanticAccentSecondary)
-                        }
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-}
-
-struct ModelStatItem {
-    let model: String
-    let requests: Int
-    let tokens: Int
-}
-
-struct ModelStatsCard: View {
-    let stat: ModelStatItem
-    
-    var body: some View {
-        GroupBox {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(stat.model)
-                        .font(.headline)
-                    Text("\(stat.requests) "+"stats.requests".localized(fallback: "请求"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(stat.tokens.formattedTokenCount)
-                        .font(.system(.title3, design: .rounded, weight: .semibold))
-                        .foregroundStyle(Color.semanticAccentSecondary)
-                    Text("usage.stats.tokens.unit".localized(fallback: "tokens"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-}
-
-struct SSEEventRow: View {
-    let event: SSERequestEvent
-    var onFocus: (() -> Void)? = nil
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Event type indicator
-            Image(systemName: eventIcon)
-                .foregroundStyle(eventColor)
-            
-            // Time
-            if let date = event.date {
-                Text(date, style: .time)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            
-            // Model
-            if let model = event.model {
-                Text(model)
-                    .font(.caption)
-                    .lineLimit(1)
-            }
-            
-            // Account
-            if let authFile = event.authFile {
-                Text(authFile)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            if let source = event.source {
-                Text(source)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            // Status badge
-            Text(event.type.uppercased())
-                .font(.system(.caption2, design: .monospaced, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(eventColor)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onFocus?()
-        }
-        .help("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
-        .accessibilityLabel("stats.realtimeEventRow".localized(fallback: "实时事件行"))
-        .accessibilityHint("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            onFocus?()
-        }
-    }
-    
-    private var eventIcon: String {
-        switch event.type {
-        case "request": return "arrow.up.arrow.down"
-        case "quota_exceeded": return "exclamationmark.triangle.fill"
-        case "error": return "xmark.circle.fill"
-        case "connected": return "checkmark.circle.fill"
-        default: return "questionmark.circle"
-        }
-    }
-    
-    private var eventColor: Color {
-        switch event.type {
-        case "request": return event.success == true ? Color.semanticSuccess : Color.semanticWarning
-        case "quota_exceeded": return Color.semanticWarning
-        case "error": return Color.semanticDanger
-        case "connected": return Color.semanticInfo
-        default: return .gray
-        }
-    }
-}
-
-#Preview {
-    UsageStatsScreen()
 }

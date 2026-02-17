@@ -71,6 +71,17 @@ actor ManagementAPIClient {
         activeRequests -= 1
         return activeRequests
     }
+
+    private nonisolated func endpointWithQuery(_ path: String, items: [URLQueryItem]) -> String {
+        guard !items.isEmpty else { return path }
+        var components = URLComponents()
+        components.path = path
+        components.queryItems = items
+        guard let encodedQuery = components.percentEncodedQuery, !encodedQuery.isEmpty else {
+            return path
+        }
+        return "\(path)?\(encodedQuery)"
+    }
     
     // MARK: - Initialization
     
@@ -211,8 +222,10 @@ actor ManagementAPIClient {
     }
     
     func fetchAuthFileModels(name: String) async throws -> [AuthFileModelInfo] {
-        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
-        let data = try await makeRequest("/auth-files/models?name=\(encoded)")
+        let endpoint = endpointWithQuery("/auth-files/models", items: [
+            URLQueryItem(name: "name", value: name)
+        ])
+        let data = try await makeRequest(endpoint)
         let response = try JSONDecoder().decode(AuthFileModelsResponse.self, from: data)
         return response.models
     }
@@ -224,7 +237,10 @@ actor ManagementAPIClient {
     }
     
     func deleteAuthFile(name: String) async throws {
-        _ = try await makeRequest("/auth-files?name=\(name)", method: "DELETE")
+        let endpoint = endpointWithQuery("/auth-files", items: [
+            URLQueryItem(name: "name", value: name)
+        ])
+        _ = try await makeRequest(endpoint, method: "DELETE")
     }
     
     func deleteAllAuthFiles() async throws {
@@ -256,37 +272,54 @@ actor ManagementAPIClient {
         account: String? = nil,
         source: String? = nil
     ) async throws -> RequestHistoryResponse {
-        var queryParams: [String] = [
-            "limit=\(limit)",
-            "offset=\(offset)"
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset))
         ]
         if let model = model {
-            queryParams.append("model=\(model)")
+            queryItems.append(URLQueryItem(name: "model", value: model))
         }
         if let provider = provider {
-            queryParams.append("provider=\(provider)")
+            queryItems.append(URLQueryItem(name: "provider", value: provider))
         }
         if let success = success {
-            queryParams.append("success=\(success)")
+            queryItems.append(URLQueryItem(name: "success", value: String(success)))
         }
         if let requestId = requestId, !requestId.isEmpty {
-            queryParams.append("request_id=\(requestId)")
+            queryItems.append(URLQueryItem(name: "request_id", value: requestId))
         }
         if let account = account, !account.isEmpty {
-            queryParams.append("auth_index=\(account)")
+            queryItems.append(URLQueryItem(name: "auth_index", value: account))
         }
         if let source = source, !source.isEmpty {
-            queryParams.append("source=\(source)")
+            queryItems.append(URLQueryItem(name: "source", value: source))
         }
         
-        let endpoint = "/usage/history?\(queryParams.joined(separator: "&"))"
+        let endpoint = endpointWithQuery("/usage/history", items: queryItems)
         let data = try await makeRequest(endpoint)
         return try JSONDecoder().decode(RequestHistoryResponse.self, from: data)
     }
     
-    /// Create SSE stream URL for real-time usage events
-    func getSSEStreamURL() -> URL? {
+    /// Create SSE stream URL for real-time usage events.
+    /// When `sinceSeq` is provided, server attempts replay before live streaming.
+    func getSSEStreamURL(sinceSeq: Int64? = nil) -> URL? {
+        if let sinceSeq, sinceSeq > 0 {
+            let endpoint = endpointWithQuery("/usage/stream", items: [
+                URLQueryItem(name: "since_seq", value: String(sinceSeq))
+            ])
+            return URL(string: "\(baseURL)\(endpoint)")
+        }
         return URL(string: "\(baseURL)/usage/stream")
+    }
+
+    func fetchUsageEvents(sinceSeq: Int64 = 0, limit: Int = 500) async throws -> [SSERequestEvent] {
+        let endpoint = endpointWithQuery("/usage/events", items: [
+            URLQueryItem(name: "since_seq", value: String(max(0, sinceSeq))),
+            URLQueryItem(name: "limit", value: String(max(1, limit)))
+        ])
+        let data = try await makeRequest(endpoint)
+        let response = try JSONDecoder().decode(UsageEventsResponse.self, from: data)
+        return response.events
     }
     
     /// Export usage statistics for backup
@@ -305,27 +338,27 @@ actor ManagementAPIClient {
         isWebUI: Bool = true
     ) async throws -> OAuthURLResponse {
         var endpoint = provider.oauthEndpoint
-        var queryParams: [String] = []
+        var queryItems: [URLQueryItem] = []
         
         if let projectId = projectId, provider == .gemini {
-            queryParams.append("project_id=\(projectId)")
+            queryItems.append(URLQueryItem(name: "project_id", value: projectId))
         }
         
         let webUIProviders: [AIProvider] = [.antigravity, .claude, .codex, .gemini, .iflow, .kiro]
         if isWebUI && webUIProviders.contains(provider) {
-            queryParams.append("is_webui=true")
+            queryItems.append(URLQueryItem(name: "is_webui", value: "true"))
         }
         
-        if !queryParams.isEmpty {
-            endpoint += "?" + queryParams.joined(separator: "&")
-        }
-        
+        endpoint = endpointWithQuery(endpoint, items: queryItems)
         let data = try await makeRequest(endpoint)
         return try JSONDecoder().decode(OAuthURLResponse.self, from: data)
     }
     
     func pollOAuthStatus(state: String) async throws -> OAuthStatusResponse {
-        let data = try await makeRequest("/get-auth-status?state=\(state)")
+        let endpoint = endpointWithQuery("/get-auth-status", items: [
+            URLQueryItem(name: "state", value: state)
+        ])
+        let data = try await makeRequest(endpoint)
         return try JSONDecoder().decode(OAuthStatusResponse.self, from: data)
     }
     
@@ -535,7 +568,7 @@ actor ManagementAPIClient {
 
     /// Fetch account-level egress mapping snapshot from management API.
     func fetchEgressMapping() async throws -> EgressMappingResponse {
-        let data = try await makeRequest("/v0/management/egress-mapping")
+        let data = try await makeRequest("/egress-mapping")
         return try JSONDecoder().decode(EgressMappingResponse.self, from: data)
     }
     
@@ -557,8 +590,10 @@ actor ManagementAPIClient {
     }
     
     func deleteAPIKey(value: String) async throws {
-        let encodedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
-        _ = try await makeRequest("/api-keys?value=\(encodedValue)", method: "DELETE")
+        let endpoint = endpointWithQuery("/api-keys", items: [
+            URLQueryItem(name: "value", value: value)
+        ])
+        _ = try await makeRequest(endpoint, method: "DELETE")
     }
     
     func deleteAPIKeyByIndex(_ index: Int) async throws {
@@ -647,6 +682,10 @@ nonisolated struct LogsResponse: Codable, Sendable {
         case lineCount = "line-count"
         case latestTimestamp = "latest-timestamp"
     }
+}
+
+nonisolated struct UsageEventsResponse: Codable, Sendable {
+    let events: [SSERequestEvent]
 }
 
 nonisolated struct AuthFileModelsResponse: Codable, Sendable {

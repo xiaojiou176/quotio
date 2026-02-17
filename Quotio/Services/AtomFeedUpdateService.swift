@@ -150,7 +150,7 @@ final class AtomFeedUpdateService {
             return (nil, false)
 
         case .error(let error):
-            NSLog("[AtomFeedUpdateService] CLIProxy feed error: \(error.localizedDescription)")
+            Log.warning("[AtomFeedUpdateService] CLIProxy feed error: \(error.localizedDescription)")
             return (nil, false)
         }
     }
@@ -196,7 +196,7 @@ final class AtomFeedUpdateService {
             return (nil, false)
 
         case .error(let error):
-            NSLog("[AtomFeedUpdateService] Quotio feed error: \(error.localizedDescription)")
+            Log.warning("[AtomFeedUpdateService] Quotio feed error: \(error.localizedDescription)")
             return (nil, false)
         }
     }
@@ -217,7 +217,7 @@ final class AtomFeedUpdateService {
         guard !isPollingEnabled else { return }
         isPollingEnabled = true
 
-        NSLog("[AtomFeedUpdateService] Starting background polling (interval: \(Self.pollingIntervalSeconds)s)")
+        Log.update("[AtomFeedUpdateService] Starting background polling (interval: \(Self.pollingIntervalSeconds)s)")
 
         pollingTask = Task { [weak self] in
             // Initial check after short delay
@@ -241,7 +241,7 @@ final class AtomFeedUpdateService {
         pollingTask = nil
         // Invalidate URLSession to release connections
         urlSession.invalidateAndCancel()
-        NSLog("[AtomFeedUpdateService] Stopped background polling")
+        Log.update("[AtomFeedUpdateService] Stopped background polling")
     }
 
     /// Perform a single polling check and update observable state.
@@ -267,7 +267,7 @@ final class AtomFeedUpdateService {
                 // Send system notification
                 if let version = latestVersion {
                     NotificationManager.shared.notifyUpgradeAvailable(version: version)
-                    NSLog("[AtomFeedUpdateService] New CLIProxyAPI version available: \(version)")
+                    Log.update("[AtomFeedUpdateService] New CLIProxyAPI version available: \(version)")
                 }
             }
         } else {
@@ -288,9 +288,9 @@ final class AtomFeedUpdateService {
         cliProxyUpdateAvailable = isNewer && latestVersion != nil
 
         if cliProxyUpdateAvailable, let version = latestVersion {
-            NSLog("[AtomFeedUpdateService] Manual check: CLIProxyAPI \(version) available")
+            Log.update("[AtomFeedUpdateService] Manual check: CLIProxyAPI \(version) available")
         } else {
-            NSLog("[AtomFeedUpdateService] Manual check: CLIProxyAPI is up to date")
+            Log.update("[AtomFeedUpdateService] Manual check: CLIProxyAPI is up to date")
         }
     }
 

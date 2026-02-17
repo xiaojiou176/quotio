@@ -111,21 +111,7 @@ final class ImageCacheService: @unchecked Sendable {
         }
         memoryPressureSource = source
         source.resume()
-
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.cache.countLimit = 20
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.cache.countLimit = 50
-        }
+        // Keep the cache policy static to avoid Sendable-closure warnings in Swift 6.
+        // Memory pressure events still evict all cached entries immediately.
     }
 }

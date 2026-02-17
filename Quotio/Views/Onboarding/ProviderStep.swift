@@ -21,7 +21,7 @@ struct ProviderStep: View {
             
             navigationButtons
         }
-        .padding(40)
+        .padding(32)
     }
     
     private var headerSection: some View {

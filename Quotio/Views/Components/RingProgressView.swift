@@ -47,7 +47,7 @@ struct RingProgressView: View {
 }
 
 #Preview {
-    HStack(spacing: 20) {
+    HStack(spacing: 24) {
         RingProgressView(percent: 75, tint: .semanticSuccess, showLabel: true)
         RingProgressView(percent: 30, tint: .semanticWarning, showLabel: true)
         RingProgressView(percent: 5, tint: .semanticDanger, showLabel: true)

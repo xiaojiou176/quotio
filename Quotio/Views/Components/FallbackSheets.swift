@@ -83,7 +83,7 @@ struct VirtualModelSheet: View {
                 .disabled(!isValidName)
             }
         }
-        .padding(40)
+        .padding(32)
         .frame(width: 440)
         .onAppear {
             if let model = virtualModel {
@@ -300,7 +300,7 @@ struct AddFallbackEntrySheet: View {
                 .disabled(!isValidEntry)
             }
         }
-        .padding(40)
+        .padding(32)
         .frame(width: 480)
     }
 

@@ -49,11 +49,19 @@ final class UIBaselineMetricsTracker {
     private let fileQueue = DispatchQueue(label: "dev.quotio.desktop.ui-metrics-file")
 
     private var storageURL: URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            fatalError("Application Support directory not found")
+        let baseURL: URL
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            baseURL = appSupport
+        } else {
+            baseURL = FileManager.default.temporaryDirectory
+            Log.warning("Application Support directory unavailable, UI metrics falling back to temporary directory")
         }
-        let dir = appSupport.appendingPathComponent("Quotio")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = baseURL.appendingPathComponent("Quotio")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            Log.warning("[UIMetrics] Failed to create metrics directory: \(error.localizedDescription)")
+        }
         return dir.appendingPathComponent("ui-metrics.json")
     }
 
@@ -95,9 +103,9 @@ final class UIBaselineMetricsTracker {
             events = Array(events.suffix(UIMetricStore.maxEvents))
         }
         if let durationMs {
-            NSLog("[UIMetrics] \(name) duration=\(durationMs)ms metadata=\(metadata ?? "-")")
+            Log.debug("[UIMetrics] \(name) duration=\(durationMs)ms metadata=\(metadata ?? "-")")
         } else {
-            NSLog("[UIMetrics] \(name) metadata=\(metadata ?? "-")")
+            Log.debug("[UIMetrics] \(name) metadata=\(metadata ?? "-")")
         }
         saveToDisk()
     }
@@ -111,7 +119,7 @@ final class UIBaselineMetricsTracker {
             let store = try decoder.decode(UIMetricStore.self, from: data)
             events = store.events
         } catch {
-            NSLog("[UIMetrics] Failed to load metrics: \(error.localizedDescription)")
+            Log.warning("[UIMetrics] Failed to load metrics: \(error.localizedDescription)")
             events = []
         }
     }
@@ -127,7 +135,7 @@ final class UIBaselineMetricsTracker {
                 let data = try encoder.encode(snapshot)
                 try data.write(to: targetURL, options: .atomic)
             } catch {
-                NSLog("[UIMetrics] Failed to save metrics: \(error.localizedDescription)")
+                Log.warning("[UIMetrics] Failed to save metrics: \(error.localizedDescription)")
             }
         }
     }

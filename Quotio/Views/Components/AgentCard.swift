@@ -57,6 +57,7 @@ struct AgentCard: View {
                     }
                     .buttonStyle(.borderless)
                     .help("agents.viewDocs".localized())
+                    .accessibilityLabel("agents.viewDocs".localized())
                 }
                 
                 Button {
@@ -98,7 +99,7 @@ private struct StatusBadge: View {
                 .foregroundStyle(status.statusColor)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
         .background(status.statusColor.opacity(0.1))
         .clipShape(Capsule())
     }

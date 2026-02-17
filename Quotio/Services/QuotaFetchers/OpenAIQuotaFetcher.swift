@@ -209,32 +209,60 @@ actor OpenAIQuotaFetcher {
         }
     }
 
-    func fetchAllCodexQuotas(authDir: String = "~/.cli-proxy-api") async -> [String: ProviderQuotaData] {
+    private func userFacingFailureMessage(for error: Error) -> String {
+        if let quotaError = error as? CodexQuotaError {
+            switch quotaError {
+            case .httpError(let code):
+                return "HTTP \(code)"
+            default:
+                return quotaError.localizedDescription
+            }
+        }
+        return error.localizedDescription
+    }
+
+    private func canonicalLookupKey(_ key: String) -> String {
+        key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    func fetchAllCodexQuotas(authDir: String = "~/.cli-proxy-api") async -> CodexQuotaFetchReport {
         let expandedPath = NSString(string: authDir).expandingTildeInPath
         let fileManager = FileManager.default
         
         guard let files = try? fileManager.contentsOfDirectory(atPath: expandedPath) else {
-            return [:]
+            return CodexQuotaFetchReport(quotas: [:], failures: [:])
         }
         
         var results: [String: ProviderQuotaData] = [:]
+        var failures: [String: String] = [:]
         
         for file in files where file.hasPrefix("codex-") && file.hasSuffix(".json") {
             let filePath = (expandedPath as NSString).appendingPathComponent(file)
+            var lookupKeys = Set(codexQuotaLookupKeys(fileName: file, filePath: filePath))
             
             do {
-                let quota = try await fetchQuotaForAuthFile(at: filePath)
-                let providerQuota = quota.toProviderQuotaData()
-                let lookupKeys = codexQuotaLookupKeys(fileName: file, filePath: filePath)
+                let result = try await fetchQuotaForAuthFile(at: filePath)
+                let providerQuota = result.quota.toProviderQuotaData()
+                lookupKeys.insert(result.accountKey)
                 for key in lookupKeys where !key.isEmpty {
                     results[key] = providerQuota
+                    failures.removeValue(forKey: key)
+                    failures.removeValue(forKey: canonicalLookupKey(key))
                 }
             } catch {
+                let failure = userFacingFailureMessage(for: error)
                 Log.quota("Failed to fetch Codex quota for \(file): \(error)")
+                if lookupKeys.isEmpty {
+                    lookupKeys.insert(fallbackKey(fromFilename: file))
+                }
+                for key in lookupKeys where !key.isEmpty {
+                    failures[key] = failure
+                    failures[canonicalLookupKey(key)] = failure
+                }
             }
         }
         
-        return results
+        return CodexQuotaFetchReport(quotas: results, failures: failures)
     }
 
     private func codexQuotaLookupKeys(fileName: String, filePath: String) -> [String] {
@@ -260,6 +288,11 @@ actor OpenAIQuotaFetcher {
 
         return Array(Set(keys))
     }
+}
+
+nonisolated struct CodexQuotaFetchReport: Sendable {
+    let quotas: [String: ProviderQuotaData]
+    let failures: [String: String]
 }
 
 nonisolated struct CodexUsageResponse: Codable, Sendable {

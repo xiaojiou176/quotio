@@ -70,7 +70,7 @@ struct TunnelSheet: View {
                     .frame(width: 48, height: 48)
                     .overlay(
                         Circle()
-                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+                            .strokeBorder(Color.primary.opacity(0.16), lineWidth: 1)
                     )
                 
                 Image(systemName: "globe")
@@ -110,7 +110,7 @@ struct TunnelSheet: View {
                 if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
         }
-        .padding(20)
+        .padding(24)
     }
     
     private var statusSection: some View {
@@ -165,7 +165,7 @@ struct TunnelSheet: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        .shadow(color: Color.primary.opacity(0.05), radius: 2, x: 0, y: 1)
     }
     
     private var publicUrlSection: some View {
@@ -224,7 +224,7 @@ struct TunnelSheet: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        .shadow(color: Color.primary.opacity(0.05), radius: 2, x: 0, y: 1)
     }
     
     private func errorSection(_ message: String) -> some View {
@@ -280,7 +280,7 @@ struct TunnelSheet: View {
                 
                 GridRow {
                     Image(systemName: "person.badge.minus")
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(.secondary)
                         .frame(width: 20)
                     Text("tunnel.info.noAccount".localized())
                         .font(.subheadline)
@@ -295,7 +295,7 @@ struct TunnelSheet: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        .shadow(color: Color.primary.opacity(0.05), radius: 2, x: 0, y: 1)
     }
     
     private var installationBanner: some View {
@@ -377,7 +377,7 @@ struct TunnelSheet: View {
             .keyboardShortcut(.cancelAction)
             .controlSize(.large)
         }
-        .padding(20)
+        .padding(24)
     }
     
     private func formatUptime(since date: Date) -> String {

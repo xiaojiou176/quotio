@@ -40,7 +40,7 @@ struct AgentConfigSheet: View {
                         configurationView
                     }
                 }
-                .padding(20)
+                .padding(24)
             }
             .scrollIndicators(.automatic, axes: .vertical)
             
@@ -153,7 +153,7 @@ struct AgentConfigSheet: View {
     // MARK: - Setup Mode Section
     
     private var setupModeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("agents.setupMode".localized())
                     .font(.subheadline)
@@ -188,13 +188,13 @@ struct AgentConfigSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var defaultModeInfoSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("agents.defaultSetup".localized())
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -216,15 +216,15 @@ struct AgentConfigSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     // MARK: - Backup Section
     
     private var backupSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("agents.restoreBackup".localized())
                     .font(.subheadline)
@@ -252,9 +252,9 @@ struct AgentConfigSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .alert("agents.restoreBackup.confirm.title".localized(), isPresented: $showRestoreConfirm) {
             Button("action.cancel".localized(), role: .cancel) {
                 backupToRestore = nil
@@ -270,7 +270,7 @@ struct AgentConfigSheet: View {
     }
     
     private var modeSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("agents.configMode".localized())
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -285,13 +285,13 @@ struct AgentConfigSheet: View {
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var storageOptionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("agents.storageOption".localized())
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -306,13 +306,13 @@ struct AgentConfigSheet: View {
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var connectionInfoSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("agents.connectionInfo".localized())
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -322,9 +322,9 @@ struct AgentConfigSheet: View {
                 InfoRow(label: "agents.apiKey".localized(), value: maskedAPIKey, isMasked: true)
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var maskedAPIKey: String {
@@ -335,7 +335,7 @@ struct AgentConfigSheet: View {
     }
     
     private var modelSlotsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("agents.modelSlots".localized())
                     .font(.subheadline)
@@ -372,9 +372,9 @@ struct AgentConfigSheet: View {
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var oauthToggleSection: some View {
@@ -392,13 +392,13 @@ struct AgentConfigSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var manualPreviewSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("agents.rawConfigs".localized())
                     .font(.subheadline)
@@ -442,12 +442,12 @@ struct AgentConfigSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 20)
+                .padding(.vertical, 24)
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private func copyPreviewToClipboard(index: Int? = nil) {
@@ -465,7 +465,7 @@ struct AgentConfigSheet: View {
     }
     
     private var testConnectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("agents.testConnection".localized())
                     .font(.subheadline)
@@ -495,9 +495,9 @@ struct AgentConfigSheet: View {
                 TestResultView(result: result)
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     @ViewBuilder
@@ -511,7 +511,7 @@ struct AgentConfigSheet: View {
     
     private var successResultView: some View {
         VStack(spacing: 16) {
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 44))
                     .foregroundStyle(Color.semanticSuccess)
@@ -529,7 +529,7 @@ struct AgentConfigSheet: View {
                     .frame(maxWidth: .infinity)
                     .padding(12)
                     .background(Color.semanticSurfaceElevated)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 
                 if result.mode == .automatic {
                     automaticModeResult(result)
@@ -543,36 +543,36 @@ struct AgentConfigSheet: View {
     }
     
     private func automaticModeResult(_ result: AgentConfigResult) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("agents.filesModified".localized())
                 .font(.subheadline)
                 .fontWeight(.medium)
             
             VStack(alignment: .leading, spacing: 6) {
                 if let configPath = result.configPath {
-                    FilePathRow(icon: "doc.fill", label: "Config", path: configPath)
+                    FilePathRow(icon: "doc.fill", label: "agents.fileRow.config".localized(fallback: "配置"), path: configPath)
                 }
                 
                 if let authPath = result.authPath {
-                    FilePathRow(icon: "key.fill", label: "Auth", path: authPath)
+                    FilePathRow(icon: "key.fill", label: "agents.fileRow.auth".localized(fallback: "鉴权"), path: authPath)
                 }
                 
                 if result.shellConfig != nil {
-                    FilePathRow(icon: "terminal", label: "Shell", path: viewModel.detectedShell.profilePath)
+                    FilePathRow(icon: "terminal", label: "agents.fileRow.shell".localized(fallback: "Shell"), path: viewModel.detectedShell.profilePath)
                 }
                 
                 if let backupPath = result.backupPath {
-                    FilePathRow(icon: "clock.arrow.circlepath", label: "Backup", path: backupPath)
+                    FilePathRow(icon: "clock.arrow.circlepath", label: "agents.fileRow.backup".localized(fallback: "备份"), path: backupPath)
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private func manualModeResult(_ result: AgentConfigResult) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("agents.rawConfigs".localized())
                     .font(.subheadline)
@@ -606,13 +606,13 @@ struct AgentConfigSheet: View {
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .background(Color.semanticSurfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var errorResultView: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(Color.semanticDanger)
@@ -629,7 +629,7 @@ struct AgentConfigSheet: View {
                     .frame(maxWidth: .infinity)
                     .padding(12)
                     .background(Color.semanticSurfaceElevated)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
     }
@@ -674,313 +674,4 @@ struct AgentConfigSheet: View {
         }
         .padding(16)
     }
-}
-
-private struct ModeButton: View {
-    let mode: ConfigurationMode
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button {
-            action()
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: mode.icon)
-                    .font(.title3)
-                Text(mode.displayName)
-                    .font(.caption)
-                    .fontWeight(.medium)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.semanticSurfaceElevated)
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
-            )
-        }
-        .buttonStyle(.borderless)
-    }
-}
-
-private struct SetupModeButton: View {
-    let setup: ConfigurationSetup
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button {
-            action()
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: setup.icon)
-                    .font(.title3)
-                Text(setup.displayName)
-                    .font(.caption)
-                    .fontWeight(.medium)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.semanticSurfaceElevated)
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
-            )
-        }
-        .buttonStyle(.borderless)
-    }
-}
-
-private struct BackupButton: View {
-    let backup: AgentConfigurationService.BackupFile
-    let action: () -> Void
-    
-    var body: some View {
-        Button {
-            action()
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.callout)
-                Text(backup.displayName)
-                    .font(.caption2)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.semanticSurfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.borderless)
-    }
-}
-
-private struct StorageOptionButton: View {
-    let option: ConfigStorageOption
-    let isSelected: Bool
-    let action: () -> Void
-    
-    private var displayName: String {
-        switch option {
-        case .jsonOnly: return "agents.storage.jsonOnly".localized()
-        case .shellOnly: return "agents.storage.shellOnly".localized()
-        case .both: return "agents.storage.both".localized()
-        }
-    }
-    
-    var body: some View {
-        Button {
-            action()
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: option.icon)
-                    .font(.title3)
-                Text(displayName)
-                    .font(.caption)
-                    .fontWeight(.medium)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.semanticSurfaceElevated)
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
-            )
-        }
-        .buttonStyle(.borderless)
-    }
-}
-
-private struct InfoRow: View {
-    let label: String
-    let value: String
-    var isMasked: Bool = false
-    
-    var body: some View {
-        HStack {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            
-            Spacer()
-            
-            Text(value)
-                .font(.caption)
-                .fontDesign(.monospaced)
-                .foregroundStyle(isMasked ? .secondary : .primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-}
-
-private struct ModelSlotRow: View {
-    let slot: ModelSlot
-    let selectedModel: String
-    let availableModels: [AvailableModel]
-    let onModelChange: (String) -> Void
-    
-    private var effectiveSelection: String {
-        if !selectedModel.isEmpty && availableModels.contains(where: { $0.name == selectedModel }) {
-            return selectedModel
-        }
-        return ""
-    }
-    
-    var body: some View {
-        HStack {
-            Text(slot.displayName)
-                .font(.caption)
-                .fontWeight(.medium)
-            
-            Spacer(minLength: 12)
-            
-            Picker("", selection: Binding(
-                get: { effectiveSelection },
-                set: { onModelChange($0) }
-            )) {
-                Text("agents.unspecified".localized(fallback: "未指定"))
-                    .tag("")
-
-                let providers = Set(availableModels.map { $0.provider }).sorted()
-                
-                ForEach(providers, id: \.self) { provider in
-                    Section(header: Text(provider.capitalized)) {
-                        ForEach(availableModels.filter { $0.provider == provider }) { model in
-                            Text(model.displayName)
-                                .tag(model.name)
-                        }
-                    }
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(maxWidth: 280)
-            .accessibilityLabel(slot.displayName)
-            .help(slot.displayName)
-        }
-    }
-}
-
-private struct TestResultView: View {
-    let result: ConnectionTestResult
-    
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(result.success ? Color.semanticSuccess : Color.semanticDanger)
-            
-            Text(result.message)
-                .font(.caption)
-                .foregroundStyle(result.success ? Color.semanticSuccess : Color.semanticDanger)
-            
-            Spacer()
-            
-            if let latency = result.latencyMs {
-                Text("\(latency)ms")
-                    .font(.caption)
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(10)
-        .background(result.success ? Color.semanticSuccess.opacity(0.1) : Color.semanticDanger.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct FilePathRow: View {
-    let icon: String
-    let label: String
-    let path: String
-    
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 45, alignment: .leading)
-            
-            Text(path)
-                .font(.caption)
-                .fontDesign(.monospaced)
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-}
-
-private struct RawConfigView: View {
-    let config: RawConfigOutput
-    let onCopy: () -> Void
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                if let targetPath = config.targetPath {
-                    Text(targetPath)
-                        .font(.caption)
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                
-                Spacer()
-                
-                Text(config.format.rawValue.uppercased())
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.semanticSelectionFill)
-                    .foregroundStyle(Color.semanticInfo)
-                    .clipShape(Capsule())
-                
-                Button {
-                    onCopy()
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("action.copy".localized())
-                .help("action.copy".localized())
-            }
-            
-            ScrollView {
-                Text(config.content)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollIndicators(.automatic, axes: .vertical)
-            .frame(minHeight: 150, maxHeight: 320)
-            .padding(10)
-            .background(Color.black.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-    }
-}
-
-#Preview {
-    AgentConfigSheet(
-        viewModel: AgentSetupViewModel(),
-        agent: .claudeCode
-    )
 }

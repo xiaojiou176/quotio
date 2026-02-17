@@ -16,7 +16,7 @@ struct AccountsEmptyState: View {
     var isQuotaOnlyMode: Bool = false
     
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
             // Illustration
             ZStack {
                 Circle()
@@ -62,7 +62,7 @@ struct AccountsEmptyState: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
+        .padding(.vertical, 32)
     }
 }
 
@@ -72,8 +72,8 @@ struct AccountsEmptyState: View {
     List {
         Section {
             AccountsEmptyState(
-                onScanIDEs: { print("Scan IDEs") },
-                onAddProvider: { print("Add provider") }
+                onScanIDEs: {},
+                onAddProvider: {}
             )
         }
     }

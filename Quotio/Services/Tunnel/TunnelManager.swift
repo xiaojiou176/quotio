@@ -46,7 +46,7 @@ final class TunnelManager {
     
     func startTunnel(port: UInt16) async {
         guard tunnelState.status == .idle || tunnelState.status == .error else {
-            NSLog("[TunnelManager] Cannot start tunnel: status is %@", tunnelState.status.rawValue)
+            Log.proxy("[TunnelManager] Cannot start tunnel: status is \(tunnelState.status.rawValue)")
             return
         }
         
@@ -71,7 +71,7 @@ final class TunnelManager {
                 Task { @MainActor in
                     guard let self = self else { return }
                     guard self.tunnelRequestId == currentRequestId else {
-                        NSLog("[TunnelManager] Ignoring stale callback for request %llu (current: %llu)", currentRequestId, self.tunnelRequestId)
+                        Log.proxy("[TunnelManager] Ignoring stale callback for request \(currentRequestId) (current: \(self.tunnelRequestId))")
                         return
                     }
                     self.tunnelState.publicURL = url
@@ -81,7 +81,7 @@ final class TunnelManager {
                     self.cancelStartTimeout()
                     self.cancelAutoRestart()
                     self.resetAutoRestartAttempts()
-                    NSLog("[TunnelManager] Tunnel active: %@", url)
+                    Log.proxy("[TunnelManager] Tunnel active: \(url)")
                 }
             }
 
@@ -94,14 +94,14 @@ final class TunnelManager {
             tunnelState.errorMessage = error.localizedMessage
             cancelStartTimeout()
             CLIProxyManager.shared.updateConfigAllowRemote(false)
-            NSLog("[TunnelManager] Failed to start tunnel: %@", error.localizedMessage)
+            Log.error("[TunnelManager] Failed to start tunnel: \(error.localizedMessage)")
         } catch {
             guard tunnelRequestId == currentRequestId else { return }
             tunnelState.status = .error
             tunnelState.errorMessage = error.localizedDescription
             cancelStartTimeout()
             CLIProxyManager.shared.updateConfigAllowRemote(false)
-            NSLog("[TunnelManager] Failed to start tunnel: %@", error.localizedDescription)
+            Log.error("[TunnelManager] Failed to start tunnel: \(error.localizedDescription)")
         }
     }
     
@@ -121,7 +121,7 @@ final class TunnelManager {
         CLIProxyManager.shared.updateConfigAllowRemote(false)
 
         tunnelState.reset()
-        NSLog("[TunnelManager] Tunnel stopped")
+        Log.proxy("[TunnelManager] Tunnel stopped")
     }
     
     func toggle(port: UInt16) async {
@@ -168,7 +168,7 @@ final class TunnelManager {
                     self.tunnelState.status = .error
                     self.tunnelState.errorMessage = "tunnel.error.unexpectedExit".localized()
                     CLIProxyManager.shared.updateConfigAllowRemote(false)
-                    NSLog("[TunnelManager] Tunnel process exited unexpectedly")
+                    Log.warning("[TunnelManager] Tunnel process exited unexpectedly")
                     await self.service.stop()
                     self.scheduleAutoRestart()
                     break
@@ -197,7 +197,7 @@ final class TunnelManager {
             self.tunnelState.status = .error
             self.tunnelState.errorMessage = "tunnel.error.startTimeout".localized()
             CLIProxyManager.shared.updateConfigAllowRemote(false)
-            NSLog("[TunnelManager] Tunnel start timed out after %.0f seconds", self.startTimeoutSeconds)
+            Log.warning("[TunnelManager] Tunnel start timed out after \(Int(self.startTimeoutSeconds)) seconds")
             await self.service.stop()
         }
     }
@@ -212,16 +212,16 @@ final class TunnelManager {
         
         let autoRestartEnabled = UserDefaults.standard.bool(forKey: "autoRestartTunnel")
         guard autoRestartEnabled, lastPort > 0 else { return }
-        
+
         guard autoRestartAttempts < maxAutoRestartAttempts else {
-            NSLog("[TunnelManager] Max auto-restart attempts reached (%d), stopping", autoRestartAttempts)
+            Log.warning("[TunnelManager] Max auto-restart attempts reached (\(autoRestartAttempts)), stopping")
             return
         }
         
         let delay = autoRestartDelaySeconds
         let port = lastPort
         
-        NSLog("[TunnelManager] Scheduling auto-restart in %.0f seconds (attempt %d/%d)", delay, autoRestartAttempts + 1, maxAutoRestartAttempts)
+        Log.proxy("[TunnelManager] Scheduling auto-restart in \(Int(delay)) seconds (attempt \(autoRestartAttempts + 1)/\(maxAutoRestartAttempts))")
         
         autoRestartTask = Task { [weak self] in
             do {
@@ -231,14 +231,14 @@ final class TunnelManager {
             }
             guard !Task.isCancelled else { return }
             guard let self = self else { return }
-            
+
             guard self.tunnelState.status == .error || self.tunnelState.status == .idle else {
-                NSLog("[TunnelManager] Skipping auto-restart: status is %@", self.tunnelState.status.rawValue)
+                Log.proxy("[TunnelManager] Skipping auto-restart: status is \(self.tunnelState.status.rawValue)")
                 return
             }
-            
+
             self.autoRestartAttempts += 1
-            NSLog("[TunnelManager] Auto-restarting tunnel on port %d (attempt %d)", port, self.autoRestartAttempts)
+            Log.proxy("[TunnelManager] Auto-restarting tunnel on port \(port) (attempt \(self.autoRestartAttempts))")
             await self.startTunnel(port: port)
         }
     }

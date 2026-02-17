@@ -97,14 +97,14 @@ struct AddProviderPopover: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(Color.semanticWarning)
-                        .padding(.top, 1)
+                        .padding(.top, 4)
 
                     Text("providers.gemini.tip.multiCredential".localized())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
+                .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.semanticWarningFill)
@@ -289,7 +289,7 @@ struct AddProviderPopover: View {
                 .foregroundStyle(hasAttemptedSubmit ? Color.semanticDanger : .secondary)
             }
         }
-        .padding(10)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.primary.opacity(0.05))
@@ -340,7 +340,7 @@ private struct ProviderButton: View {
                             )
                         )
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.semanticOnAccent)
                             .padding(4)
                             .background(provider.color)
                             .clipShape(Circle())
@@ -386,15 +386,9 @@ private struct ProviderButton: View {
     AddProviderPopover(
         providers: AIProvider.allCases.filter { $0.supportsManualAuth },
         existingCounts: [.claude: 2, .antigravity: 1],  // Preview with some existing accounts
-        onSelectProvider: { provider in
-            print("Selected: \(provider.displayName)")
-        },
-        onScanIDEs: {
-            print("Scan IDEs")
-        },
-        onAddCustomProvider: {
-            print("Add Custom Provider")
-        },
+        onSelectProvider: { _ in },
+        onScanIDEs: {},
+        onAddCustomProvider: {},
         onDismiss: {}
     )
 }

@@ -80,8 +80,7 @@ extension UsageStatsScreen {
 
     func connectSSE() async {
         guard !isSSEStreamActive else { return }
-        guard let apiClient = viewModel.apiClient,
-              let url = await apiClient.getSSEStreamURL() else { return }
+        guard let apiClient = viewModel.apiClient else { return }
 
         isSSEStreamActive = true
         defer {
@@ -89,16 +88,22 @@ extension UsageStatsScreen {
             isSSEStreamActive = false
         }
 
-        var request = URLRequest(url: url)
-        let authKey = viewModel.proxyManager.managementKey
-        if !authKey.isEmpty {
-            request.setValue("Bearer \(authKey)", forHTTPHeaderField: "Authorization")
-        }
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
         while !Task.isCancelled && selectedTab == .realtime {
             do {
+                guard let url = await apiClient.getSSEStreamURL(sinceSeq: lastSeenSSESeq > 0 ? lastSeenSSESeq : nil) else {
+                    throw URLError(.badURL)
+                }
+                var request = URLRequest(url: url)
+                let authKey = viewModel.proxyManager.managementKey
+                if !authKey.isEmpty {
+                    request.setValue("Bearer \(authKey)", forHTTPHeaderField: "Authorization")
+                }
+                request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                if lastSeenSSESeq > 0 {
+                    request.setValue(String(lastSeenSSESeq), forHTTPHeaderField: "Last-Event-ID")
+                }
+
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, 200...299 ~= http.statusCode else {
                     throw URLError(.badServerResponse)
@@ -117,9 +122,6 @@ extension UsageStatsScreen {
                               let event = try? JSONDecoder().decode(SSERequestEvent.self, from: data) else {
                             continue
                         }
-                        if isRealtimePaused {
-                            continue
-                        }
                         ingestRealtimeEvent(event)
                     }
                 }
@@ -127,25 +129,24 @@ extension UsageStatsScreen {
             } catch {
                 Log.warning("[UsageStatsScreen] SSE stream error: \(error)")
                 isSSEConnected = false
+                if let replay = try? await apiClient.fetchUsageEvents(sinceSeq: lastSeenSSESeq, limit: 1000) {
+                    for event in replay {
+                        ingestRealtimeEvent(event)
+                    }
+                }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }
 
     private func ingestRealtimeEvent(_ event: SSERequestEvent) {
+        if let seq = event.seq, seq > lastSeenSSESeq {
+            lastSeenSSESeq = seq
+        }
         let key = event.dedupeKey
         guard !sseEventKeys.contains(key) else { return }
         sseEvents.append(event)
         sseEventKeys.insert(key)
-
-        if sseEvents.count > 100 {
-            let overflow = sseEvents.count - 100
-            let removed = Array(sseEvents.prefix(overflow))
-            sseEvents.removeFirst(overflow)
-            for event in removed {
-                sseEventKeys.remove(event.dedupeKey)
-            }
-        }
     }
 
     func exportStats() async {

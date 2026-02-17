@@ -48,6 +48,16 @@ struct QuotaCard: View {
             (remainingPercent: value.total / Double(max(value.count, 1)), resetTime: value.resetTime, count: value.count)
         }
     }
+
+    private var statusLabel: String {
+        if readyCount > 0 {
+            return "quota.status.ready".localized(fallback: "可用")
+        }
+        if coolingCount > 0 {
+            return "quota.status.cooling".localized(fallback: "冷却中")
+        }
+        return "quota.status.error".localized(fallback: "错误")
+    }
     
     var body: some View {
         GroupBox {
@@ -86,7 +96,7 @@ struct QuotaCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.displayName)
                     .font(.headline)
-                Text(verbatim: "\(accounts.count) account\(accounts.count == 1 ? "" : "s")")
+                Text("quota.accounts.count".localized(fallback: "\(accounts.count) 个账号"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -97,13 +107,14 @@ struct QuotaCard: View {
                 Image(systemName: readyCount > 0 ? "checkmark.circle.fill" : (coolingCount > 0 ? "clock.badge.exclamationmark" : "xmark.circle.fill"))
                     .font(.caption)
                     .foregroundStyle(readyCount > 0 ? Color.semanticSuccess : (coolingCount > 0 ? Color.semanticWarning : Color.semanticDanger))
-                Text(readyCount > 0 ? "Available" : (coolingCount > 0 ? "Cooling" : "Error"))
+                    .accessibilityHidden(true)
+                Text(statusLabel)
                     .font(.caption)
                     .fontWeight(.medium)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("quota.status.summary".localized(fallback: "状态摘要"))
-            .accessibilityValue(readyCount > 0 ? "Available" : (coolingCount > 0 ? "Cooling" : "Error"))
+            .accessibilityValue(statusLabel)
         }
     }
     
@@ -130,7 +141,7 @@ struct QuotaCard: View {
     private var estimatedQuotaSection: some View {
         VStack(spacing: 12) {
             QuotaSection(
-                title: "Session",
+                title: "quota.session".localized(fallback: "Session"),
                 remainingPercent: sessionRemainingPercent,
                 resetTime: sessionResetTime,
                 tint: sessionRemainingPercent > 50 ? Color.semanticSuccess : (sessionRemainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
@@ -138,7 +149,7 @@ struct QuotaCard: View {
             
             if provider == .claude || provider == .codex {
                 QuotaSection(
-                    title: "Weekly",
+                    title: "quota.weekly".localized(fallback: "Weekly"),
                     remainingPercent: weeklyRemainingPercent,
                     resetTime: weeklyResetTime,
                     tint: weeklyRemainingPercent > 50 ? Color.semanticSuccess : (weeklyRemainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
@@ -366,7 +377,7 @@ private struct QuotaAccountRow: View {
                 .padding(.leading, 16)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }
 

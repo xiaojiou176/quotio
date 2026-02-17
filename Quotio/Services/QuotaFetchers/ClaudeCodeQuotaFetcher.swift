@@ -174,7 +174,7 @@ actor ClaudeCodeQuotaFetcher {
         guard let httpResponse = response as? HTTPURLResponse,
               200...299 ~= httpResponse.statusCode else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            NSLog("[ClaudeQuota] Token refresh failed with HTTP \(statusCode)")
+            Log.warning("[ClaudeQuota] Token refresh failed with HTTP \(statusCode)")
             throw URLError(.userAuthenticationRequired)
         }
 
@@ -235,13 +235,13 @@ actor ClaudeCodeQuotaFetcher {
                 }
                 // Other non-2xx status codes
                 if !(200...299 ~= httpResponse.statusCode) {
-                    NSLog("[ClaudeQuota] HTTP error: \(httpResponse.statusCode)")
+                    Log.warning("[ClaudeQuota] HTTP error: \(httpResponse.statusCode)")
                     return .otherError
                 }
             }
 
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                NSLog("[ClaudeQuota] Failed to parse JSON response")
+                Log.warning("[ClaudeQuota] Failed to parse JSON response")
                 return .otherError
             }
 
@@ -252,10 +252,11 @@ actor ClaudeCodeQuotaFetcher {
                    let errorType = errorObj["type"] as? String,
                    errorType == "authentication_error" {
                     // Token expired or invalid
-                    NSLog("[ClaudeQuota] Authentication error for \(email ?? "unknown")")
+                    let identity = email ?? "unknown"
+                    Log.warning("[ClaudeQuota] Authentication error for \(identity)")
                     return .authenticationError
                 }
-                NSLog("[ClaudeQuota] API error: \(json)")
+                Log.warning("[ClaudeQuota] API error: \(json)")
                 return .otherError
             }
 
@@ -276,7 +277,7 @@ actor ClaudeCodeQuotaFetcher {
                 extraUsage: extraUsage
             ))
         } catch {
-            NSLog("[ClaudeQuota] Network error: \(error.localizedDescription)")
+            Log.warning("[ClaudeQuota] Network error: \(error.localizedDescription)")
             return .otherError
         }
     }
@@ -349,9 +350,9 @@ actor ClaudeCodeQuotaFetcher {
                 let refreshed = try await refreshAccessToken(refreshToken: refreshToken)
                 accessToken = refreshed.accessToken
                 updateAuthFile(at: path, json: json, accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken, expiresIn: refreshed.expiresIn)
-                NSLog("[ClaudeQuota] Token refreshed for \(email)")
+                Log.quota("[ClaudeQuota] Token refreshed for \(email)")
             } catch {
-                NSLog("[ClaudeQuota] Token refresh failed for \(email): \(error.localizedDescription)")
+                Log.warning("[ClaudeQuota] Token refresh failed for \(email): \(error.localizedDescription)")
                 // Fall through with expired token; API call will return authenticationError
             }
         }
