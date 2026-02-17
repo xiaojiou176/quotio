@@ -24,3 +24,7 @@
 
 - 脚本：`./scripts/doc-ci-gate.sh`
 - workflow：`.github/workflows/doc-governance.yml`
+
+## Active Branch Note (2026-02-17)
+
+当前分支包含 `.github/workflows/*`、`Quotio/**`、`scripts/**` 的持续改动，提交前必须保持本文件同步更新。
