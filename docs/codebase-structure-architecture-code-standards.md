@@ -1,8 +1,8 @@
 # Quotio - Codebase Structure, Architecture, and Code Standards
 
-> **Last Updated**: January 2, 2025  
+> **Last Updated**: February 17, 2026  
 > **Swift Version**: 6.0  
-> **Minimum macOS**: 15.0 (Sequoia)
+> **Minimum macOS**: 14.0 (Sonoma)
 
 ---
 
@@ -802,7 +802,7 @@ func generateConfiguration(
 
 ## Testing Guidelines
 
-> **Note**: This project currently has no automated tests.
+This project includes automated tests and CI gates.
 
 When implementing features, test manually:
 
@@ -811,21 +811,26 @@ When implementing features, test manually:
    xcodebuild -project Quotio.xcodeproj -scheme Quotio -configuration Debug build
    ```
 
-2. **UI Testing**:
+2. **Automated Test Verification**:
+   ```bash
+   xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" test
+   ```
+
+3. **UI Testing**:
    - Run app in Xcode (`Cmd + R`)
    - Test in both light and dark mode
    - Verify all screens render correctly
 
-3. **Menu Bar Testing**:
+4. **Menu Bar Testing**:
    - Check icon displays correctly
    - Verify popover opens/closes
    - Test quota display updates
 
-4. **Localization Testing**:
+5. **Localization Testing**:
    - Switch system language to Vietnamese
    - Verify all strings are translated
 
-5. **Mode Testing**:
+6. **Mode Testing**:
    - Test Full Mode with proxy
    - Test Quota-Only Mode without proxy
    - Test mode switching
@@ -855,3 +860,8 @@ xcodebuild archive \
 # Check for compile errors
 xcodebuild -project Quotio.xcodeproj -scheme Quotio -configuration Debug build 2>&1 | head -50
 ```
+
+## Governance References
+
+- Documentation policy: `docs/documentation-policy.md`
+- Debug runbook: `docs/debug-runbook.md`

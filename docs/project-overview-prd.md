@@ -1,8 +1,8 @@
 # Quotio - Project Overview and Product Requirements Document (PRD)
 
-> **Last Updated**: December 27, 2024
+> **Last Updated**: February 17, 2026
 > **Version**: 1.0.0
-> **Platform**: macOS 15.0+ (Sequoia)
+> **Platform**: macOS 14.0+ (Sonoma)
 
 ---
 
@@ -252,7 +252,7 @@ Lightweight mode for quota monitoring without proxy overhead:
 
 | Requirement | Version |
 |-------------|---------|
-| **macOS** | 15.0 (Sequoia) or later |
+| **macOS** | 14.0 (Sonoma) or later |
 | **Xcode** (for development) | 16.0+ |
 | **Swift** (for development) | 6.0+ |
 

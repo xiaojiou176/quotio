@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **governance**: add documentation policy and CI doc-gate workflow
+  - Add `docs/documentation-policy.md`
+  - Add `.github/workflows/doc-governance.yml`
+  - Add `scripts/doc-ci-gate.sh`
+- **debug**: add debug and logging runbook
+  - Add `docs/debug-runbook.md`
+
+### Changed
+
+- **docs**: align project baseline metadata with current state
+  - Update PRD timestamp and minimum macOS version
+  - Update architecture standards timestamp and minimum macOS version
+  - Update README testing section with governance/debug references
+
 ## [0.13.0] - 2026-02-15
 
 ### Added

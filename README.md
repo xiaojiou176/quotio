@@ -108,6 +108,25 @@ Download the latest `.dmg` from the [Releases](https://github.com/nguyenphutrong
 
 > The app will automatically download the `CLIProxyAPI` binary on first launch.
 
+## ✅ Testing
+
+Run local automated checks before opening a PR:
+
+```bash
+xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" build
+xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" test
+```
+
+CI gates:
+- PR: `.github/workflows/pr-ci.yml` (build + test)
+- Nightly: `.github/workflows/nightly-ci.yml` (build + test)
+
+Documentation governance:
+- Policy: `docs/documentation-policy.md`
+- Local gate: `./scripts/doc-ci-gate.sh`
+- CI gate: `.github/workflows/doc-governance.yml`
+- Debug runbook: `docs/debug-runbook.md`
+
 ## 📖 Usage
 
 ### 1. Start the Server
@@ -130,6 +149,33 @@ Go to **Agents** tab → Select an installed agent → Click **Configure** → C
 - **Routing Strategy**: Round Robin or Fill First
 - **Auto-start**: Launch proxy automatically when Quotio opens
 - **Notifications**: Toggle alerts for various events
+
+## 📚 Request Logging & Auditability
+
+Quotio records auditable request evidence for traffic that passes through its local proxy bridge.
+
+- What is recorded per request:
+  - request identity: `requestId`, timestamp, HTTP method/path
+  - route evidence: provider/model + resolved provider/model after fallback
+  - source evidence: client source classification and source header/User-Agent signal
+  - execution result: `statusCode`, latency, request/response byte size
+  - optional payload evidence: raw payload snippet (truncated when oversized)
+- Success/failure rule:
+  - A request is treated as success only when `statusCode` is `2xx`.
+  - Non-2xx or missing status code is tracked as failure and included in error-focused audit output.
+- Local persistence and export:
+  - Local history file: `~/Library/Application Support/Quotio/request-history.json`
+  - Logs screen can export an audit package containing recent requests, recent failures, aggregate stats, and settings/auth evidence snapshot.
+- Payload evidence control:
+  - `ui.captureRequestPayloadEvidence` (enabled by default) controls whether payload snippets are captured.
+  - Captured payload text is stored raw and truncated for oversized requests.
+- Settings audit trail:
+  - `~/Library/Application Support/Quotio/settings-audit.json` records setting old/new values in raw form (no masking) for full-fidelity debugging.
+
+For backend-side file logging in CLIProxyAPI, configure management endpoints:
+- `GET/PUT/PATCH /v0/management/request-log`
+- `GET/PUT/PATCH /v0/management/logging-to-file`
+- Request log files include `Prompt Debug` summaries (system/messages/input/contents/prompt), so each upstream AI prompt can be traced during debugging.
 
 ## 📸 Screenshots
 

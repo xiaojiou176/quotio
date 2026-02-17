@@ -1,0 +1,22 @@
+name: nightly-ci
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.1"
+      - name: Build
+        run: xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" build
+      - name: Test
+        run: xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" test

@@ -164,12 +164,53 @@ weak var viewModel: QuotaViewModel?
 
 ## Testing
 
-No automated tests. Manual testing:
+Automated tests:
+- `./scripts/test.sh` - Stable unit test runner (`build-for-testing + xctest`)
+- `xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination 'platform=macOS' build-for-testing`
+
+Manual testing:
 - Run with `Cmd + R`
 - Verify light/dark mode
 - Test menu bar integration
 - Check all providers OAuth
 - Validate localization
+
+## Documentation Governance (Required)
+
+- Policy: `docs/documentation-policy.md`
+- Every code change must include matching documentation updates
+- Gate: `./scripts/doc-ci-gate.sh`
+
+## Observability & Audit Logging
+
+Use this as the source of truth for Quotio-side request audit behavior.
+
+- Capture scope:
+  - Requests that pass through `ProxyBridge` (Quotio local proxy listener) emit one `RequestMetadata` record via `onRequestCompleted`.
+  - Wiring path: `QuotaViewModel.startProxy()` -> `proxyBridge.onRequestCompleted` -> `RequestTracker.addRequest(...)`.
+- Per-request evidence fields:
+  - identity: `requestId`, `timestamp`, `method`, `path`
+  - routing: `provider`, `model`, `resolvedProvider`, `resolvedModel`, fallback attempts/cache flag
+  - source/account hints: `source`, `sourceRaw`, `accountHint`
+  - execution: `statusCode`, `durationMs`, `requestSize`, `responseSize`
+  - troubleshooting: `responseSnippet` (failure context)
+- Payload evidence policy:
+  - Controlled by `UserDefaults` key `ui.captureRequestPayloadEvidence` (default enabled).
+  - Payload snippets are recorded in raw form and truncated to 4096 chars when oversized.
+- Settings audit policy:
+  - `SettingsAuditTrail` persists to `~/Library/Application Support/Quotio/settings-audit.json`.
+  - Old/new values are stored in raw form (no masking) for local deep-debug traceability.
+- Success/failure semantics:
+  - `RequestLog.isSuccess == true` only when `statusCode` is in `200..<300`.
+  - Missing status code or non-2xx is treated as failure and contributes to error slices/stats.
+- Persistence & export:
+  - Persistent file: `~/Library/Application Support/Quotio/request-history.json`.
+  - `RequestTracker.exportAuditPackageData(...)` exports:
+    - recent requests
+    - recent failures
+    - aggregate stats
+    - settings snapshot (`requestLog`, `loggingToFile`, feature flags)
+    - auth evidence snapshot for related accounts
 
 ## Git Workflow
 

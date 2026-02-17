@@ -41,6 +41,11 @@ Follow this order to understand the codebase efficiently:
 | Check if stale | `agentlens --check` |
 | Force full regen | `agentlens --force` |
 
+## Documentation Governance
+
+- Policy: `docs/documentation-policy.md`
+- Gate: `./scripts/doc-ci-gate.sh`
+
 ## Key Patterns
 
 - **Module boundaries**: `mod.rs` (Rust), `index.ts` (TS), `__init__.py` (Python)
