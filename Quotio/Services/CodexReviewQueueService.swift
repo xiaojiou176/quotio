@@ -43,6 +43,7 @@ actor CodexReviewQueueService {
         onEvent(.phaseChanged(.preparing))
         let jobId = Self.makeJobID()
         let jobURL = try prepareJobDirectory(workspacePath: config.workspacePath, jobId: jobId, config: config)
+        let createdAt = Date()
 
         if Task.isCancelled { throw CodexReviewQueueError.cancelled }
 
@@ -83,52 +84,95 @@ actor CodexReviewQueueService {
                 }
                 .joined(separator: "\n")
             let message = failures.isEmpty ? "All review workers failed." : "All review workers failed:\n\(failures)"
+            writeSummary(
+                jobURL: jobURL,
+                createdAt: createdAt,
+                jobId: jobId,
+                phase: .failed,
+                workers: workers,
+                aggregateOutputPath: nil,
+                fixOutputPath: nil,
+                config: config
+            )
             throw CodexReviewQueueError.executionFailed(message)
         }
 
         var aggregateOutputURL: URL?
-        if config.runAggregate {
-            onEvent(.phaseChanged(.aggregating))
-            let path = jobURL.appendingPathComponent("aggregate.md")
-            try await runAggregateStage(
-                workers: workers,
-                config: config,
-                workspacePath: config.workspacePath,
-                outputPath: path.path
-            )
-            onEvent(.aggregateReady(path: path.path))
-            aggregateOutputURL = path
-        }
-
-        if Task.isCancelled { throw CodexReviewQueueError.cancelled }
-
         var fixOutputURL: URL?
-        if config.runFix {
-            guard config.runAggregate, let aggregateOutputURL else {
-                throw CodexReviewQueueError.invalidStageConfiguration
+        do {
+            if config.runAggregate {
+                onEvent(.phaseChanged(.aggregating))
+                let path = jobURL.appendingPathComponent("aggregate.md")
+                try await runAggregateStage(
+                    workers: workers,
+                    config: config,
+                    workspacePath: config.workspacePath,
+                    outputPath: path.path
+                )
+                onEvent(.aggregateReady(path: path.path))
+                aggregateOutputURL = path
             }
-            onEvent(.phaseChanged(.fixing))
-            let path = jobURL.appendingPathComponent("fix.md")
-            try await runFixStage(
-                aggregateOutputPath: aggregateOutputURL.path,
-                config: config,
-                workspacePath: config.workspacePath,
-                outputPath: path.path
-            )
-            onEvent(.fixReady(path: path.path))
-            fixOutputURL = path
-        }
 
-        onEvent(.phaseChanged(.completed))
-        return ReviewQueueResult(
-            jobId: jobId,
-            jobPath: jobURL.path,
-            workers: workers,
-            aggregateOutputPath: aggregateOutputURL?.path,
-            fixOutputPath: fixOutputURL?.path,
-            completedWorkerCount: completedWorkers,
-            failedWorkerCount: failedWorkers
-        )
+            if Task.isCancelled { throw CodexReviewQueueError.cancelled }
+
+            if config.runFix {
+                guard config.runAggregate, let aggregateOutputURL else {
+                    throw CodexReviewQueueError.invalidStageConfiguration
+                }
+                onEvent(.phaseChanged(.fixing))
+                let path = jobURL.appendingPathComponent("fix.md")
+                try await runFixStage(
+                    aggregateOutputPath: aggregateOutputURL.path,
+                    config: config,
+                    workspacePath: config.workspacePath,
+                    outputPath: path.path
+                )
+                onEvent(.fixReady(path: path.path))
+                fixOutputURL = path
+            }
+
+            onEvent(.phaseChanged(.completed))
+            let result = ReviewQueueResult(
+                jobId: jobId,
+                jobPath: jobURL.path,
+                workers: workers,
+                aggregateOutputPath: aggregateOutputURL?.path,
+                fixOutputPath: fixOutputURL?.path,
+                completedWorkerCount: completedWorkers,
+                failedWorkerCount: failedWorkers
+            )
+            writeSummary(
+                jobURL: jobURL,
+                createdAt: createdAt,
+                jobId: jobId,
+                phase: .completed,
+                workers: workers,
+                aggregateOutputPath: aggregateOutputURL?.path,
+                fixOutputPath: fixOutputURL?.path,
+                config: config
+            )
+            return result
+        } catch {
+            let failedPhase: ReviewQueuePhase
+            if case CodexReviewQueueError.cancelled = error {
+                failedPhase = .cancelled
+            } else if Task.isCancelled {
+                failedPhase = .cancelled
+            } else {
+                failedPhase = .failed
+            }
+            writeSummary(
+                jobURL: jobURL,
+                createdAt: createdAt,
+                jobId: jobId,
+                phase: failedPhase,
+                workers: workers,
+                aggregateOutputPath: aggregateOutputURL?.path,
+                fixOutputPath: fixOutputURL?.path,
+                config: config
+            )
+            throw error
+        }
     }
 
     private func runReviewWorkers(
@@ -360,6 +404,44 @@ actor CodexReviewQueueService {
         let encoded = try JSONEncoder().encode(config)
         try encoded.write(to: configURL)
         return base
+    }
+
+    private func writeSummary(
+        jobURL: URL,
+        createdAt: Date,
+        jobId: String,
+        phase: ReviewQueuePhase,
+        workers: [ReviewWorkerResult],
+        aggregateOutputPath: String?,
+        fixOutputPath: String?,
+        config: ReviewQueueConfig
+    ) {
+        let completed = workers.filter { $0.status == .completed }.count
+        let failed = workers.filter { $0.status == .failed }.count
+        let summary = ReviewQueueJobSummary(
+            version: 1,
+            jobId: jobId,
+            jobPath: jobURL.path,
+            phase: phase,
+            createdAt: createdAt,
+            updatedAt: Date(),
+            workerCount: workers.count,
+            completedWorkerCount: completed,
+            failedWorkerCount: failed,
+            workers: workers,
+            aggregateOutputPath: aggregateOutputPath,
+            fixOutputPath: fixOutputPath,
+            runAggregate: config.runAggregate,
+            runFix: config.runFix,
+            model: config.model
+        )
+        let summaryURL = jobURL.appendingPathComponent("summary.json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(summary) {
+            try? data.write(to: summaryURL)
+        }
     }
 
     private func parseLastAgentMessage(from output: String) -> String? {

@@ -24,12 +24,14 @@ struct ReviewQueueScreen: View {
                 executionCard
                 progressCard
                 outputCard
+                historyCard
             }
             .padding(20)
         }
         .navigationTitle("nav.reviewQueue".localized(fallback: "Review Queue"))
         .task {
             codexInstalled = await viewModel.checkCodexInstalled()
+            viewModel.refreshHistory()
         }
     }
 
@@ -66,12 +68,19 @@ struct ReviewQueueScreen: View {
             HStack(spacing: 8) {
                 TextField("queue.workspace.placeholder".localized(fallback: "选择任意工作区目录"), text: Binding(
                     get: { viewModel.workspacePath },
-                    set: { viewModel.workspacePath = $0 }
+                    set: {
+                        viewModel.workspacePath = $0
+                        viewModel.refreshHistory()
+                    }
                 ))
                 .textFieldStyle(.roundedBorder)
 
                 Button("action.browse".localized(fallback: "浏览")) {
                     viewModel.chooseWorkspace()
+                }
+                .buttonStyle(.bordered)
+                Button("queue.history.refresh".localized(fallback: "刷新历史")) {
+                    viewModel.refreshHistory()
                 }
                 .buttonStyle(.bordered)
             }
@@ -82,6 +91,24 @@ struct ReviewQueueScreen: View {
 
     private var promptCard: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Picker("queue.preset".localized(fallback: "Prompt 模板"), selection: Binding(
+                    get: { viewModel.selectedPresetId },
+                    set: { viewModel.selectedPresetId = $0 }
+                )) {
+                    ForEach(viewModel.presets) { preset in
+                        Text(preset.name).tag(preset.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 220)
+
+                Button("queue.preset.apply".localized(fallback: "应用模板")) {
+                    viewModel.applySelectedPreset()
+                }
+                .buttonStyle(.bordered)
+            }
+
             Toggle("queue.prompt.custom".localized(fallback: "使用自定义 Prompt 列表（每行一个 Worker）"), isOn: Binding(
                 get: { viewModel.useCustomPrompts },
                 set: { viewModel.useCustomPrompts = $0 }
@@ -196,6 +223,12 @@ struct ReviewQueueScreen: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(startDisabled)
 
+                Button("queue.rerunFailed".localized(fallback: "仅重跑失败项")) {
+                    viewModel.rerunFailedWorkers()
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isRunning || failedWorkerCount == 0)
+
                 Button("action.cancel".localized(fallback: "取消")) {
                     viewModel.cancelRun()
                 }
@@ -207,6 +240,54 @@ struct ReviewQueueScreen: View {
                     .font(.caption)
                     .foregroundStyle(Color.semanticDanger)
                     .textSelection(.enabled)
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var historyCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("queue.history".localized(fallback: "历史任务"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            if viewModel.historyItems.isEmpty {
+                Text("queue.history.empty".localized(fallback: "当前工作区暂无历史任务。"))
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            } else {
+                ForEach(viewModel.historyItems.prefix(10)) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(historyTitle(item))
+                                .font(.caption.weight(.semibold))
+                            historyPhaseBadge(item.phase)
+                        }
+                        Text("Worker: \(item.workerCount) | Failed: \(item.failedWorkerCount) | Model: \(item.model ?? "-")")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Button("queue.outputs.openJob".localized(fallback: "打开 Job")) {
+                                viewModel.openPathInFinder(item.jobPath)
+                            }
+                            .buttonStyle(.borderless)
+                            if let path = item.aggregateOutputPath {
+                                Button("queue.outputs.openAggregate".localized(fallback: "打开汇总")) {
+                                    viewModel.openPathInFinder(path)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            if let path = item.fixOutputPath {
+                                Button("queue.outputs.openFix".localized(fallback: "打开修复")) {
+                                    viewModel.openPathInFinder(path)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
             }
         }
         .padding(16)
@@ -299,6 +380,10 @@ struct ReviewQueueScreen: View {
         viewModel.workspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var failedWorkerCount: Int {
+        viewModel.workers.filter { $0.status == .failed }.count
+    }
+
     private func outputRow(label: String, value: String, action: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label + ":")
@@ -326,6 +411,40 @@ struct ReviewQueueScreen: View {
             return Color.semanticSuccess
         case .failed:
             return Color.semanticDanger
+        }
+    }
+
+    private func historyTitle(_ item: ReviewQueueHistoryItem) -> String {
+        guard let createdAt = item.createdAt else {
+            return item.jobId
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return "\(item.jobId) · \(formatter.string(from: createdAt))"
+    }
+
+    private func historyPhaseBadge(_ phase: ReviewQueuePhase) -> some View {
+        Text(phase.rawValue)
+            .font(.caption2.monospaced())
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(historyPhaseColor(phase).opacity(0.16), in: Capsule())
+            .foregroundStyle(historyPhaseColor(phase))
+    }
+
+    private func historyPhaseColor(_ phase: ReviewQueuePhase) -> Color {
+        switch phase {
+        case .completed:
+            return Color.semanticSuccess
+        case .failed:
+            return Color.semanticDanger
+        case .cancelled:
+            return .secondary
+        case .fixing, .aggregating, .reviewing, .preparing:
+            return Color.semanticInfo
+        case .idle:
+            return .secondary
         }
     }
 }
