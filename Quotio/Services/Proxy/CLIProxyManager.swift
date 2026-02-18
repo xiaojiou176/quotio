@@ -1402,6 +1402,10 @@ extension CLIProxyManager {
     /// Uses Atom feed with ETag caching for efficient polling.
     /// Falls back to GitHub API only when needed for download URLs.
     func checkForUpgrade() async {
+        guard !AppLifecycleState.isTerminating else {
+            return
+        }
+
         // Record when this check was performed
         lastProxyUpdateCheckDate = Date()
         
@@ -1412,6 +1416,10 @@ extension CLIProxyManager {
         guard isNewer, let latestTag = latestVersion else {
             upgradeAvailable = false
             availableUpgrade = nil
+            return
+        }
+
+        guard !AppLifecycleState.isTerminating else {
             return
         }
 

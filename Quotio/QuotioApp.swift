@@ -400,6 +400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        AppLifecycleState.isTerminating = true
+
         // Stop background polling
         AtomFeedUpdateService.shared.stopPolling()
 

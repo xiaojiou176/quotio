@@ -39,6 +39,47 @@ struct CachedFeedState: Codable, Sendable {
     let lastChecked: Date
 }
 
+// MARK: - Conditional Header Sanitizer
+
+enum AtomFeedHeaderSanitizer {
+    /// Normalizes an ETag value for use in `If-None-Match`.
+    /// Handles legacy escaped slashes (`W\/"..."`) and rejects control characters.
+    nonisolated static func sanitizeETag(_ rawValue: String) -> String? {
+        sanitizeHeaderValue(rawValue, allowsComma: true)
+    }
+
+    /// Normalizes `Last-Modified` value for use in `If-Modified-Since`.
+    nonisolated static func sanitizeLastModified(_ rawValue: String) -> String? {
+        sanitizeHeaderValue(rawValue, allowsComma: true)
+    }
+
+    nonisolated private static func sanitizeHeaderValue(_ rawValue: String, allowsComma: Bool) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Old cache payloads may contain escaped slash sequences.
+        let normalized = trimmed.replacingOccurrences(of: "\\/", with: "/")
+
+        for scalar in normalized.unicodeScalars {
+            switch scalar.value {
+            case 0x20...0x7E:
+                continue
+            case 0x09 where allowsComma:
+                continue
+            default:
+                return nil
+            }
+        }
+
+        // Explicitly reject CR/LF injection even if future sanitization changes.
+        if normalized.contains("\r") || normalized.contains("\n") {
+            return nil
+        }
+
+        return normalized
+    }
+}
+
 // MARK: - AtomFeedUpdateService
 
 @MainActor
@@ -81,16 +122,28 @@ final class AtomFeedUpdateService {
     private var pollingTask: Task<Void, Never>?
     private var isPollingEnabled: Bool = false
 
-    /// Shared URLSession for all feed requests (avoids creating new sessions per request)
+    /// Shared URLSession for feed requests.
+    /// Recreated automatically when invalidated during polling shutdown.
     @ObservationIgnored
-    private lazy var urlSession: URLSession = {
+    private var urlSession: URLSession?
+
+    private func makeURLSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         config.urlCache = nil // Don't cache, we use ETag
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: config)
-    }()
+    }
+
+    private func activeURLSession() -> URLSession {
+        if let existing = urlSession {
+            return existing
+        }
+        let session = makeURLSession()
+        urlSession = session
+        return session
+    }
 
     private let dateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -240,7 +293,8 @@ final class AtomFeedUpdateService {
         pollingTask?.cancel()
         pollingTask = nil
         // Invalidate URLSession to release connections
-        urlSession.invalidateAndCancel()
+        urlSession?.invalidateAndCancel()
+        urlSession = nil
         Log.update("[AtomFeedUpdateService] Stopped background polling")
     }
 
@@ -303,6 +357,10 @@ final class AtomFeedUpdateService {
     // MARK: - Private Methods
 
     private func fetchAtomFeed(url: String, cacheKey: String) async -> AtomFeedResult {
+        if AppLifecycleState.isTerminating {
+            return .error(CancellationError())
+        }
+
         guard let feedURL = URL(string: url) else {
             return .error(AtomFeedError.invalidURL)
         }
@@ -314,15 +372,29 @@ final class AtomFeedUpdateService {
         // Add conditional request headers if we have cached state
         if let cached = loadCacheState(cacheKey: cacheKey) {
             if let etag = cached.etag {
-                request.addValue(etag, forHTTPHeaderField: "If-None-Match")
+                if let sanitizedETag = AtomFeedHeaderSanitizer.sanitizeETag(etag) {
+                    request.setValue(sanitizedETag, forHTTPHeaderField: "If-None-Match")
+                } else {
+                    // Self-heal malformed cache to prevent URLSession request construction crashes.
+                    UserDefaults.standard.removeObject(forKey: cacheKey)
+                    Log.warning("[AtomFeedUpdateService] Dropped malformed ETag cache for \(cacheKey)")
+                }
             }
             if let lastModified = cached.lastModified {
-                request.addValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
+                if let sanitizedLastModified = AtomFeedHeaderSanitizer.sanitizeLastModified(lastModified) {
+                    request.setValue(sanitizedLastModified, forHTTPHeaderField: "If-Modified-Since")
+                } else {
+                    UserDefaults.standard.removeObject(forKey: cacheKey)
+                    Log.warning("[AtomFeedUpdateService] Dropped malformed Last-Modified cache for \(cacheKey)")
+                }
             }
         }
 
         do {
-            let (data, response) = try await urlSession.data(for: request)
+            if AppLifecycleState.isTerminating {
+                return .error(CancellationError())
+            }
+            let (data, response) = try await activeURLSession().data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .error(AtomFeedError.invalidResponse)
@@ -369,6 +441,9 @@ final class AtomFeedUpdateService {
     private func loadCacheState(cacheKey: String) -> CachedFeedState? {
         guard let data = UserDefaults.standard.data(forKey: cacheKey),
               let state = try? JSONDecoder().decode(CachedFeedState.self, from: data) else {
+            if UserDefaults.standard.object(forKey: cacheKey) != nil {
+                UserDefaults.standard.removeObject(forKey: cacheKey)
+            }
             return nil
         }
         return state

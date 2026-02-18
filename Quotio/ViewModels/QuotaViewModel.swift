@@ -1062,6 +1062,7 @@ final class QuotaViewModel {
 
             // Check for proxy upgrade (non-blocking, fire-and-forget)
             Task {
+                guard !AppLifecycleState.isTerminating else { return }
                 await checkForProxyUpgrade()
             }
 
