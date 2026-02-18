@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Darwin
 
 /// Result of a CLI command execution
 nonisolated struct CLIExecutionResult: Sendable {
@@ -307,11 +308,38 @@ actor CLIExecutor {
             // Wait with timeout
             let deadline = Date().addingTimeInterval(timeout)
             while process.isRunning && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 100_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                } catch is CancellationError {
+                    terminateProcessIfNeeded(process)
+                    return CLIExecutionResult(
+                        output: "",
+                        errorOutput: "Command cancelled",
+                        exitCode: -2,
+                        success: false
+                    )
+                } catch {
+                    terminateProcessIfNeeded(process)
+                    return CLIExecutionResult(
+                        output: "",
+                        errorOutput: error.localizedDescription,
+                        exitCode: -1,
+                        success: false
+                    )
+                }
             }
             
             if process.isRunning {
-                process.terminate()
+                if Task.isCancelled {
+                    terminateProcessIfNeeded(process)
+                    return CLIExecutionResult(
+                        output: "",
+                        errorOutput: "Command cancelled",
+                        exitCode: -2,
+                        success: false
+                    )
+                }
+                terminateProcessIfNeeded(process)
                 return CLIExecutionResult(
                     output: "",
                     errorOutput: "Command timed out",
@@ -336,6 +364,18 @@ actor CLIExecutor {
                 exitCode: -1,
                 success: false
             )
+        }
+    }
+
+    private func terminateProcessIfNeeded(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let deadline = Date().addingTimeInterval(1.0)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
         }
     }
 }

@@ -7,6 +7,24 @@
 
 import Foundation
 
+nonisolated enum ReviewQueueLimits {
+    static let maxWorkers = 8
+    static let maxRunEvents = 200
+}
+
+nonisolated enum ReviewQueueRunEventLevel: String, Codable, Sendable {
+    case info
+    case warning
+    case error
+}
+
+nonisolated struct ReviewQueueRunEvent: Identifiable, Codable, Sendable {
+    let id: UUID
+    let timestamp: Date
+    let level: ReviewQueueRunEventLevel
+    let message: String
+}
+
 nonisolated enum ReviewQueuePhase: String, Codable, Sendable {
     case idle
     case preparing

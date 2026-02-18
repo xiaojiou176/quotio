@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update architecture standards timestamp and minimum macOS version
   - Update README testing section with governance/debug references
 
+### Fixed
+
+- **proxy**: serialize stop/start cleanup to prevent rapid restart loops
+  - Track and await detached stop cleanup before next `start()`
+  - Use `stopAndWait()` in restart and upgrade/recovery flows to avoid port-kill races
+
 ## [0.13.0] - 2026-02-15
 
 ### Added

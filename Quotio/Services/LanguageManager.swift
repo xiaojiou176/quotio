@@ -246,6 +246,15 @@ extension String {
         // If the result equals the key, the localization wasn't found
         return result == self ? fallback : result
     }
+
+    /// Localization with fallback format + runtime arguments.
+    /// If key is missing, fallback format string is used.
+    @MainActor
+    func localizedFormat(fallback: String, _ arguments: CVarArg...) -> String {
+        let result = LanguageManager.shared.localized(self)
+        let format = result == self ? fallback : result
+        return String(format: format, locale: Locale.current, arguments: arguments)
+    }
     
     /// Nonisolated localization for use in computed properties on enums/structs.
     /// Reads stored preference directly without MainActor isolation.

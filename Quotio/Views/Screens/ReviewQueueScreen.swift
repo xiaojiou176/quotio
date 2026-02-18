@@ -23,6 +23,7 @@ struct ReviewQueueScreen: View {
                 promptCard
                 executionCard
                 progressCard
+                observabilityCard
                 outputCard
                 historyCard
             }
@@ -70,7 +71,7 @@ struct ReviewQueueScreen: View {
                     get: { viewModel.workspacePath },
                     set: {
                         viewModel.workspacePath = $0
-                        viewModel.refreshHistory()
+                        viewModel.scheduleHistoryRefresh()
                     }
                 ))
                 .textFieldStyle(.roundedBorder)
@@ -79,11 +80,25 @@ struct ReviewQueueScreen: View {
                     viewModel.chooseWorkspace()
                 }
                 .buttonStyle(.bordered)
-                Button("queue.history.refresh".localized(fallback: "刷新历史")) {
+                Button("queue.history.refresh".localized()) {
                     viewModel.refreshHistory()
                 }
                 .buttonStyle(.bordered)
             }
+            HStack(spacing: 8) {
+                if viewModel.isHistoryRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("queue.history.refreshing".localized(fallback: "历史刷新中..."))
+                } else {
+                    let lastRefreshLabel = formatTime(viewModel.lastHistoryRefreshAt)
+                    Text("queue.history.lastRefresh".localizedFormat(fallback: "最近刷新: %@", lastRefreshLabel))
+                }
+                Spacer()
+                Text("queue.concurrency.cap".localizedFormat(fallback: "并发上限: %d", ReviewQueueLimits.maxWorkers))
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
         .padding(16)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -122,6 +137,23 @@ struct ReviewQueueScreen: View {
                 .frame(minHeight: 100)
                 .font(.system(.body, design: .monospaced))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                Text(
+                    "queue.prompt.plan".localizedFormat(
+                        fallback: "Prompt: %d | 最大并发: %d",
+                        viewModel.plannedPromptCount,
+                        viewModel.plannedConcurrentWorkers
+                    )
+                )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if viewModel.willQueueInBatches {
+                    Label(
+                        "queue.prompt.batchHint".localized(fallback: "Prompt 数超过并发上限，任务将自动分批执行。"),
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(Color.semanticInfo)
+                }
             } else {
                 Stepper(
                     "queue.prompt.workers".localized(fallback: "并发 Worker 数") + ": \(viewModel.workerCount)",
@@ -129,7 +161,7 @@ struct ReviewQueueScreen: View {
                         get: { viewModel.workerCount },
                         set: { viewModel.workerCount = $0 }
                     ),
-                    in: 1...8
+                    in: 1...ReviewQueueLimits.maxWorkers
                 )
 
                 TextEditor(text: Binding(
@@ -216,6 +248,15 @@ struct ReviewQueueScreen: View {
                     set: { viewModel.ephemeral = $0 }
                 ))
             }
+            Text(
+                "queue.execution.plan".localizedFormat(
+                    fallback: "计划执行 Prompt: %d | 最大并发: %d",
+                    viewModel.plannedPromptCount,
+                    viewModel.plannedConcurrentWorkers
+                )
+            )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 Button(viewModel.isRunning ? "queue.running".localized(fallback: "运行中...") : "queue.start".localized(fallback: "启动 Queue")) {
                     viewModel.startRun()
@@ -229,7 +270,7 @@ struct ReviewQueueScreen: View {
                 .buttonStyle(.bordered)
                 .disabled(viewModel.isRunning || failedWorkerCount == 0)
 
-                Button("action.cancel".localized(fallback: "取消")) {
+                Button(viewModel.isCancelling ? "queue.cancelling".localized(fallback: "取消中...") : "action.cancel".localized(fallback: "取消")) {
                     viewModel.cancelRun()
                 }
                 .buttonStyle(.bordered)
@@ -248,12 +289,12 @@ struct ReviewQueueScreen: View {
 
     private var historyCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("queue.history".localized(fallback: "历史任务"))
+            Text("queue.history".localized())
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             if viewModel.historyItems.isEmpty {
-                Text("queue.history.empty".localized(fallback: "当前工作区暂无历史任务。"))
+                Text("queue.history.empty".localized())
                     .foregroundStyle(.secondary)
                     .font(.caption)
             } else {
@@ -268,18 +309,18 @@ struct ReviewQueueScreen: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         HStack(spacing: 8) {
-                            Button("queue.outputs.openJob".localized(fallback: "打开 Job")) {
+                            Button("queue.outputs.openJob".localized()) {
                                 viewModel.openPathInFinder(item.jobPath)
                             }
                             .buttonStyle(.borderless)
                             if let path = item.aggregateOutputPath {
-                                Button("queue.outputs.openAggregate".localized(fallback: "打开汇总")) {
+                                Button("queue.outputs.openAggregate".localized()) {
                                     viewModel.openPathInFinder(path)
                                 }
                                 .buttonStyle(.borderless)
                             }
                             if let path = item.fixOutputPath {
-                                Button("queue.outputs.openFix".localized(fallback: "打开修复")) {
+                                Button("queue.outputs.openFix".localized()) {
                                     viewModel.openPathInFinder(path)
                                 }
                                 .buttonStyle(.borderless)
@@ -304,6 +345,19 @@ struct ReviewQueueScreen: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             } else {
+                ProgressView(value: Double(finishedWorkerCount), total: Double(max(1, viewModel.workers.count)))
+                Text(
+                    "queue.progress.summary".localizedFormat(
+                        fallback: "Done: %d/%d | Running: %d | Failed: %d",
+                        finishedWorkerCount,
+                        viewModel.workers.count,
+                        runningWorkerCount,
+                        failedWorkerCount
+                    )
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
                 ForEach(viewModel.workers) { worker in
                     HStack(alignment: .top, spacing: 8) {
                         Circle()
@@ -323,10 +377,92 @@ struct ReviewQueueScreen: View {
                                     .foregroundStyle(Color.semanticDanger)
                                     .lineLimit(2)
                             }
+                            HStack(spacing: 8) {
+                                if let path = worker.outputPath {
+                                    Button("queue.outputs.openWorker".localized(fallback: "查看 worker 输出")) {
+                                        viewModel.openPathInFinder(path)
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                                if let path = worker.stdoutPath {
+                                    Button("queue.outputs.openStdout".localized(fallback: "stdout")) {
+                                        viewModel.openPathInFinder(path)
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                                if let path = worker.stderrPath {
+                                    Button("queue.outputs.openStderr".localized(fallback: "stderr")) {
+                                        viewModel.openPathInFinder(path)
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                            }
+                            .font(.caption2)
                         }
                     }
                     .padding(.vertical, 2)
                 }
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var observabilityCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("queue.observability".localized(fallback: "观测性"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Text(
+                    "queue.observability.phase".localizedFormat(
+                        fallback: "阶段: %@",
+                        phaseText(viewModel.phase)
+                    )
+                )
+                if let startedAt = viewModel.runStartedAt {
+                    Text(
+                        "queue.observability.started".localizedFormat(
+                            fallback: "开始: %@",
+                            formatTime(startedAt)
+                        )
+                    )
+                }
+                if let elapsed = elapsedText() {
+                    Text(
+                        "queue.observability.elapsed".localizedFormat(
+                            fallback: "耗时: %@",
+                            elapsed
+                        )
+                    )
+                }
+                Spacer()
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            if viewModel.runEvents.isEmpty {
+                Text("queue.observability.empty".localized(fallback: "暂无运行事件。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(viewModel.runEvents.suffix(60))) { event in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(formatEventTime(event.timestamp))
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                Text(event.message)
+                                    .font(.caption2)
+                                    .foregroundStyle(eventLevelColor(event.level))
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+                .frame(minHeight: 80, maxHeight: 180)
             }
         }
         .padding(16)
@@ -367,7 +503,7 @@ struct ReviewQueueScreen: View {
     }
 
     private var statusBadge: some View {
-        Text(viewModel.phase.rawValue)
+        Text(phaseText(viewModel.phase))
             .font(.caption.monospaced())
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -382,6 +518,14 @@ struct ReviewQueueScreen: View {
 
     private var failedWorkerCount: Int {
         viewModel.workers.filter { $0.status == .failed }.count
+    }
+
+    private var runningWorkerCount: Int {
+        viewModel.workers.filter { $0.status == .running }.count
+    }
+
+    private var finishedWorkerCount: Int {
+        viewModel.workers.filter { $0.status == .completed || $0.status == .failed }.count
     }
 
     private func outputRow(label: String, value: String, action: @escaping () -> Void) -> some View {
@@ -424,13 +568,41 @@ struct ReviewQueueScreen: View {
         return "\(item.jobId) · \(formatter.string(from: createdAt))"
     }
 
+    private func formatTime(_ date: Date?) -> String {
+        guard let date else { return "-" }
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        formatter.dateStyle = .none
+        return formatter.string(from: date)
+    }
+
+    private func formatEventTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    private func elapsedText() -> String? {
+        guard let started = viewModel.runStartedAt else { return nil }
+        let end = viewModel.runFinishedAt ?? Date()
+        let total = max(0, Int(end.timeIntervalSince(started)))
+        let minutes = total / 60
+        let seconds = total % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+
     private func historyPhaseBadge(_ phase: ReviewQueuePhase) -> some View {
-        Text(phase.rawValue)
+        Text(phaseText(phase))
             .font(.caption2.monospaced())
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(historyPhaseColor(phase).opacity(0.16), in: Capsule())
             .foregroundStyle(historyPhaseColor(phase))
+    }
+
+    private func phaseText(_ phase: ReviewQueuePhase) -> String {
+        "queue.phase.\(phase.rawValue)".localized()
     }
 
     private func historyPhaseColor(_ phase: ReviewQueuePhase) -> Color {
@@ -445,6 +617,17 @@ struct ReviewQueueScreen: View {
             return Color.semanticInfo
         case .idle:
             return .secondary
+        }
+    }
+
+    private func eventLevelColor(_ level: ReviewQueueRunEventLevel) -> Color {
+        switch level {
+        case .info:
+            return .secondary
+        case .warning:
+            return Color.semanticInfo
+        case .error:
+            return Color.semanticDanger
         }
     }
 }

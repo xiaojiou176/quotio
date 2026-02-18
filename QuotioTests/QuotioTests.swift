@@ -119,9 +119,9 @@ final class QuotioTests: XCTestCase {
         XCTAssertNotEqual(base.id, differentSource.id)
     }
 
-    @MainActor
-    func testReviewQueueHistoryPrefersSummaryJson() throws {
+    func testReviewQueueHistoryPrefersSummaryJson() async throws {
         let workspace = try makeTempWorkspace(name: "review-queue-summary")
+        defer { try? FileManager.default.removeItem(at: workspace) }
         let queueDir = workspace
             .appendingPathComponent(".runtime-cache")
             .appendingPathComponent("review-queue")
@@ -153,11 +153,7 @@ final class QuotioTests: XCTestCase {
         let data = try encoder.encode(summary)
         try data.write(to: queueDir.appendingPathComponent("summary.json"))
 
-        let vm = ReviewQueueViewModel()
-        vm.workspacePath = workspace.path
-        vm.refreshHistory()
-
-        let first = try XCTUnwrap(vm.historyItems.first)
+        let first = try await Self.loadFirstHistoryItem(workspacePath: workspace.path)
         XCTAssertEqual(first.jobId, "20260217-120000-abc12345")
         XCTAssertEqual(first.workerCount, 4)
         XCTAssertEqual(first.failedWorkerCount, 1)
@@ -165,9 +161,9 @@ final class QuotioTests: XCTestCase {
         XCTAssertEqual(first.model, "gpt-5.3-codex")
     }
 
-    @MainActor
-    func testReviewQueueHistoryFallbackInferenceWithoutSummary() throws {
+    func testReviewQueueHistoryFallbackInferenceWithoutSummary() async throws {
         let workspace = try makeTempWorkspace(name: "review-queue-fallback")
+        defer { try? FileManager.default.removeItem(at: workspace) }
         let queueDir = workspace
             .appendingPathComponent(".runtime-cache")
             .appendingPathComponent("review-queue")
@@ -179,23 +175,215 @@ final class QuotioTests: XCTestCase {
         let stderrPath = queueDir.appendingPathComponent("worker-01.stderr.log")
         try "fatal error".write(to: stderrPath, atomically: true, encoding: .utf8)
 
-        let vm = ReviewQueueViewModel()
-        vm.workspacePath = workspace.path
-        vm.refreshHistory()
-
-        let first = try XCTUnwrap(vm.historyItems.first)
+        let first = try await Self.loadFirstHistoryItem(workspacePath: workspace.path)
         XCTAssertEqual(first.workerCount, 1)
         XCTAssertEqual(first.failedWorkerCount, 1)
         XCTAssertEqual(first.phase, .failed)
+    }
+
+    func testReviewQueueHistoryFallbackMarksAggregateOnlyRunAsCompleted() async throws {
+        let workspace = try makeTempWorkspace(name: "review-queue-aggregate-only")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let queueDir = workspace
+            .appendingPathComponent(".runtime-cache")
+            .appendingPathComponent("review-queue")
+            .appendingPathComponent("20260217-140000-a1b2c3d4")
+        try FileManager.default.createDirectory(at: queueDir, withIntermediateDirectories: true)
+
+        try "worker output".write(to: queueDir.appendingPathComponent("worker-01.md"), atomically: true, encoding: .utf8)
+        try "aggregate output".write(to: queueDir.appendingPathComponent("aggregate.md"), atomically: true, encoding: .utf8)
+
+        let config = ReviewQueueConfig(
+            workspacePath: workspace.path,
+            reviewPrompts: ["deep review"],
+            aggregatePrompt: "aggregate",
+            fixPrompt: "fix",
+            runAggregate: true,
+            runFix: false,
+            model: "gpt-5.3-codex",
+            fullAuto: true,
+            skipGitRepoCheck: false,
+            ephemeral: false
+        )
+        let configData = try JSONEncoder().encode(config)
+        try configData.write(to: queueDir.appendingPathComponent("config.json"))
+
+        let first = try await Self.loadFirstHistoryItem(workspacePath: workspace.path)
+        XCTAssertEqual(first.phase, .completed)
+        XCTAssertNotNil(first.aggregateOutputPath)
+        XCTAssertNil(first.fixOutputPath)
+    }
+
+    func testReviewQueueMaxConcurrentWorkersIsCapped() {
+        XCTAssertEqual(CodexReviewQueueService.maxConcurrentWorkers(for: 0), 0)
+        XCTAssertEqual(CodexReviewQueueService.maxConcurrentWorkers(for: 1), 1)
+        XCTAssertEqual(CodexReviewQueueService.maxConcurrentWorkers(for: ReviewQueueLimits.maxWorkers), ReviewQueueLimits.maxWorkers)
+        XCTAssertEqual(CodexReviewQueueService.maxConcurrentWorkers(for: 100), ReviewQueueLimits.maxWorkers)
+    }
+
+    func testReviewQueuePromptPlanningForCustomPromptsShowsBatching() async throws {
+        try await MainActor.run {
+            let vm = ReviewQueueViewModel()
+            vm.useCustomPrompts = true
+            vm.customReviewPromptsText = (1...12).map { "prompt-\($0)" }.joined(separator: "\n")
+
+            XCTAssertEqual(vm.customPromptCount, 12)
+            XCTAssertEqual(vm.plannedPromptCount, 12)
+            XCTAssertEqual(vm.plannedConcurrentWorkers, ReviewQueueLimits.maxWorkers)
+            XCTAssertTrue(vm.willQueueInBatches)
+        }
+    }
+
+    func testReviewQueuePromptPlanningForSharedPromptCapsWorkerCount() async throws {
+        try await MainActor.run {
+            let vm = ReviewQueueViewModel()
+            vm.useCustomPrompts = false
+            vm.sharedReviewPrompt = "deep review"
+            vm.workerCount = 99
+
+            XCTAssertEqual(vm.plannedPromptCount, ReviewQueueLimits.maxWorkers)
+            XCTAssertEqual(vm.plannedConcurrentWorkers, ReviewQueueLimits.maxWorkers)
+            XCTAssertFalse(vm.willQueueInBatches)
+        }
+    }
+
+    func testCLIExecutorWithInputReturnsQuicklyAfterCancellation() async throws {
+        let executor = CLIExecutor.shared
+        let start = Date()
+        let task = Task {
+            await executor.executeCLIWithInput(
+                name: "bash",
+                arguments: ["-lc", "sleep 10"],
+                input: "",
+                timeout: 30
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 300_000_000)
+        task.cancel()
+        let result = await task.value
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertLessThan(elapsed, 5.0)
+        XCTAssertFalse(result.success)
+        XCTAssertEqual(result.exitCode, -2)
+        XCTAssertTrue(result.errorOutput.localizedCaseInsensitiveContains("cancel"))
+    }
+
+    func testReviewQueueWorkerArgumentsRemainCompatibleWithCurrentCLI() {
+        let config = makeReviewQueueConfigForCLICompatibility()
+        let arguments = CodexReviewQueueService.reviewWorkerArguments(config: config)
+
+        assertHasCommonExecFlags(arguments)
+        XCTAssertTrue(arguments.contains("review"))
+        XCTAssertTrue(arguments.contains("--json"))
+        XCTAssertFalse(arguments.contains("--output-last-message"))
+        XCTAssertEqual(arguments.last, "-")
+    }
+
+    func testReviewQueueAggregateArgumentsRemainCompatibleWithCurrentCLI() {
+        let config = makeReviewQueueConfigForCLICompatibility()
+        let outputPath = "/tmp/aggregate.md"
+        let arguments = CodexReviewQueueService.aggregateStageArguments(config: config, outputPath: outputPath)
+
+        assertHasCommonExecFlags(arguments)
+        XCTAssertTrue(arguments.contains("--json"))
+        XCTAssertTrue(arguments.contains("--output-last-message"))
+        XCTAssertFalse(arguments.contains("review"))
+        assertHasOutputPathAndStdin(arguments, outputPath: outputPath)
+    }
+
+    func testReviewQueueFixArgumentsRemainCompatibleWithCurrentCLI() {
+        let config = makeReviewQueueConfigForCLICompatibility()
+        let outputPath = "/tmp/fix.md"
+        let arguments = CodexReviewQueueService.fixStageArguments(config: config, outputPath: outputPath)
+
+        assertHasCommonExecFlags(arguments)
+        XCTAssertTrue(arguments.contains("--json"))
+        XCTAssertTrue(arguments.contains("--output-last-message"))
+        XCTAssertFalse(arguments.contains("review"))
+        assertHasOutputPathAndStdin(arguments, outputPath: outputPath)
+    }
+
+    func testParseLastAgentMessageIgnoresInterleavedUnknownEvents() {
+        let jsonl = """
+        {"type":"turn.started","id":"turn-1"}
+        {"type":"model/rerouted","model":"gpt-5.3-codex-low"}
+        {"type":"item.completed","item":{"type":"agent_message","text":"first"}}
+        {"type":"custom/new_event","payload":{"x":1}}
+        {"type":"item.completed","item":{"type":"agent_message","text":"final message"}}
+        """
+
+        let parsed = CodexReviewQueueService.parseLastAgentMessageFromJSONL(jsonl)
+        XCTAssertEqual(parsed, "final message")
+    }
+
+    func testParseLastAgentMessageReturnsNilWhenNoAgentMessage() {
+        let jsonl = """
+        {"type":"turn.started","id":"turn-1"}
+        {"type":"item.completed","item":{"type":"tool_call","text":"ignored"}}
+        {"type":"model/rerouted","model":"gpt-5.3-codex-low"}
+        """
+
+        let parsed = CodexReviewQueueService.parseLastAgentMessageFromJSONL(jsonl)
+        XCTAssertNil(parsed)
+    }
+
+    func testAtomFeedHeaderSanitizerNormalizesLegacyEscapedETag() {
+        let legacy = #" W\/"cc057be83df695f54f499e2ef1f36f26" "#
+        let sanitized = AtomFeedHeaderSanitizer.sanitizeETag(legacy)
+        XCTAssertEqual(sanitized, #"W/"cc057be83df695f54f499e2ef1f36f26""#)
+    }
+
+    func testAtomFeedHeaderSanitizerRejectsControlCharacters() {
+        let malformed = "W/\"abc\"\nInjected: yes"
+        XCTAssertNil(AtomFeedHeaderSanitizer.sanitizeETag(malformed))
+    }
+
+    private func assertHasCommonExecFlags(_ arguments: [String], file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(arguments.prefix(4), ["exec", "--model", "gpt-5.3-codex", "--full-auto"], file: file, line: line)
+        XCTAssertTrue(arguments.contains("--skip-git-repo-check"), file: file, line: line)
+        XCTAssertTrue(arguments.contains("--ephemeral"), file: file, line: line)
+    }
+
+    private func assertHasOutputPathAndStdin(_ arguments: [String], outputPath: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(arguments.suffix(2), [outputPath, "-"], file: file, line: line)
+    }
+
+    private func makeReviewQueueConfigForCLICompatibility() -> ReviewQueueConfig {
+        ReviewQueueConfig(
+            workspacePath: "/tmp",
+            reviewPrompts: ["review this repo"],
+            aggregatePrompt: "aggregate",
+            fixPrompt: "fix",
+            runAggregate: true,
+            runFix: true,
+            model: "gpt-5.3-codex",
+            fullAuto: true,
+            skipGitRepoCheck: true,
+            ephemeral: true
+        )
     }
 
     private func makeTempWorkspace(name: String) throws -> URL {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         let dir = root.appendingPathComponent("quotio-tests-\(name)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: dir)
-        }
         return dir
+    }
+
+    @MainActor
+    private static func loadFirstHistoryItem(workspacePath: String) async throws -> ReviewQueueHistoryItem {
+        let vm = ReviewQueueViewModel()
+        vm.workspacePath = workspacePath
+        vm.refreshHistory()
+        for _ in 0..<40 {
+            if let first = vm.historyItems.first {
+                return first
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTFail("Timed out waiting for review queue history refresh")
+        throw NSError(domain: "QuotioTests", code: 1)
     }
 }

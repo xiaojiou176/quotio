@@ -182,8 +182,14 @@ actor CodexReviewQueueService {
         config: ReviewQueueConfig,
         onEvent: @escaping @Sendable (ReviewQueueEvent) -> Void
     ) async throws -> [ReviewWorkerResult] {
-        try await withThrowingTaskGroup(of: (Int, ReviewWorkerResult).self) { group in
-            for index in prompts.indices {
+        let maxConcurrent = Self.maxConcurrentWorkers(for: prompts.count)
+        guard maxConcurrent > 0 else { return [] }
+        return try await withThrowingTaskGroup(
+            of: (Int, ReviewWorkerResult).self,
+            returning: [ReviewWorkerResult].self
+        ) { group in
+            var nextIndexToSchedule = 0
+            func enqueue(_ index: Int) {
                 let prompt = prompts[index]
                 group.addTask { [self] in
                     let workerId = index + 1
@@ -210,6 +216,11 @@ actor CodexReviewQueueService {
                 }
             }
 
+            while nextIndexToSchedule < maxConcurrent {
+                enqueue(nextIndexToSchedule)
+                nextIndexToSchedule += 1
+            }
+
             var ordered = Array(
                 repeating: ReviewWorkerResult(
                     id: 0,
@@ -222,8 +233,12 @@ actor CodexReviewQueueService {
                 ),
                 count: prompts.count
             )
-            for try await (index, worker) in group {
+            while let (index, worker) = try await group.next() {
                 ordered[index] = worker
+                if !Task.isCancelled, nextIndexToSchedule < prompts.count {
+                    enqueue(nextIndexToSchedule)
+                    nextIndexToSchedule += 1
+                }
             }
             return ordered
         }
@@ -240,12 +255,7 @@ actor CodexReviewQueueService {
         let stdoutPath = jobURL.appendingPathComponent(String(format: "worker-%02d.stdout.log", workerId)).path
         let stderrPath = jobURL.appendingPathComponent(String(format: "worker-%02d.stderr.log", workerId)).path
 
-        var arguments = baseExecArguments(config: config)
-        arguments.append("review")
-        arguments.append("--json")
-        arguments.append("--output-last-message")
-        arguments.append(outputPath)
-        arguments.append("-")
+        let arguments = Self.reviewWorkerArguments(config: config)
 
         let result = await executor.executeCLIWithInput(
             name: "codex",
@@ -321,11 +331,7 @@ actor CodexReviewQueueService {
         \(workerSections)
         """
 
-        var arguments = baseExecArguments(config: config)
-        arguments.append("--json")
-        arguments.append("--output-last-message")
-        arguments.append(outputPath)
-        arguments.append("-")
+        let arguments = Self.aggregateStageArguments(config: config, outputPath: outputPath)
 
         let result = await executor.executeCLIWithInput(
             name: "codex",
@@ -353,11 +359,7 @@ actor CodexReviewQueueService {
         \(aggregate)
         """
 
-        var arguments = baseExecArguments(config: config)
-        arguments.append("--json")
-        arguments.append("--output-last-message")
-        arguments.append(outputPath)
-        arguments.append("-")
+        let arguments = Self.fixStageArguments(config: config, outputPath: outputPath)
 
         let result = await executor.executeCLIWithInput(
             name: "codex",
@@ -371,7 +373,38 @@ actor CodexReviewQueueService {
         }
     }
 
-    private func baseExecArguments(config: ReviewQueueConfig) -> [String] {
+    static func reviewWorkerArguments(config: ReviewQueueConfig) -> [String] {
+        var arguments = baseExecArguments(config: config)
+        arguments.append("review")
+        arguments.append("--json")
+        arguments.append("-")
+        return arguments
+    }
+
+    static func aggregateStageArguments(config: ReviewQueueConfig, outputPath: String) -> [String] {
+        var arguments = baseExecArguments(config: config)
+        arguments.append("--json")
+        arguments.append("--output-last-message")
+        arguments.append(outputPath)
+        arguments.append("-")
+        return arguments
+    }
+
+    static func fixStageArguments(config: ReviewQueueConfig, outputPath: String) -> [String] {
+        var arguments = baseExecArguments(config: config)
+        arguments.append("--json")
+        arguments.append("--output-last-message")
+        arguments.append(outputPath)
+        arguments.append("-")
+        return arguments
+    }
+
+    static func maxConcurrentWorkers(for promptCount: Int) -> Int {
+        guard promptCount > 0 else { return 0 }
+        return min(promptCount, ReviewQueueLimits.maxWorkers)
+    }
+
+    private static func baseExecArguments(config: ReviewQueueConfig) -> [String] {
         var arguments = ["exec"]
         if let model = config.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             arguments.append("--model")
@@ -445,6 +478,10 @@ actor CodexReviewQueueService {
     }
 
     private func parseLastAgentMessage(from output: String) -> String? {
+        Self.parseLastAgentMessageFromJSONL(output)
+    }
+
+    static func parseLastAgentMessageFromJSONL(_ output: String) -> String? {
         let lines = output.split(separator: "\n")
         var lastMessage: String?
         for line in lines {

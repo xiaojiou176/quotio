@@ -128,6 +128,30 @@ Documentation governance:
 - CI gate: `.github/workflows/doc-governance.yml`
 - Debug runbook: `docs/debug-runbook.md`
 
+### Codex JSONL Parser Stability (2026-02-18)
+
+- Review Queue now exposes a dedicated parser helper:
+  - `CodexReviewQueueService.parseLastAgentMessageFromJSONL(_:)`
+- Parser behavior is validated for forward compatibility:
+  - interleaved unknown/new event types do not break last `item.completed(agent_message)` extraction
+  - no-agent-message payloads correctly return `nil`
+- Regression coverage:
+  - `QuotioTests.testParseLastAgentMessageIgnoresInterleavedUnknownEvents`
+  - `QuotioTests.testParseLastAgentMessageReturnsNilWhenNoAgentMessage`
+
+### Review Queue Runtime Stability (2026-02-18)
+
+- `CLIExecutor.executeCLIWithInput(...)` now handles task cancellation explicitly:
+  - avoids cancellation-induced busy loops in wait polling
+  - terminates (and force-kills if needed) the child process promptly on cancel
+- Review worker scheduling now uses a bounded concurrency window (`max 8`) instead of launching all prompts at once.
+- Workspace-history refresh no longer performs heavy directory scanning on every keystroke in the workspace input; typing path changes are debounced and resolved off the main thread.
+- History fallback phase inference (without `summary.json`) now treats aggregate-only runs (`runAggregate=true`, `runFix=false`) as completed when `aggregate.md` exists.
+- Review Queue UI now exposes clearer runtime telemetry:
+  - live progress summary (`done/running/failed`)
+  - per-worker quick links to `worker/stdout/stderr` outputs
+  - dedicated observability panel with timestamped run-event timeline
+
 ## 📖 Usage
 
 ### 1. Start the Server

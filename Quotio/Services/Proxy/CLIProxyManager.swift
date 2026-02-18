@@ -140,6 +140,14 @@ final class CLIProxyManager {
     
     /// Health monitor task for auto-recovery
     private var healthMonitorTask: Task<Void, Never>?
+
+    /// Detached stop cleanup task used to serialize stop/start transitions.
+    @ObservationIgnored
+    private var stopCleanupTask: Task<Void, Never>?
+
+    /// Monotonic token for stop cleanup task replacement.
+    @ObservationIgnored
+    private var stopCleanupGeneration: UInt64 = 0
     
     /// Consecutive health check failures
     private var healthCheckFailures: Int = 0
@@ -237,9 +245,7 @@ final class CLIProxyManager {
 
         Task {
             Log.proxy("[CLIProxyManager] Restarting proxy to apply configuration changes...")
-            stop()
-            // Wait 0.5s for ports to clear
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            await stopAndWait()
 
             do {
                 try await start()
@@ -514,8 +520,7 @@ final class CLIProxyManager {
         }
         
         do {
-            stop()
-            try await Task.sleep(for: .milliseconds(500))
+            await stopAndWait()
             try await start()
             if !KeychainHelper.saveLocalManagementKey(newKey) {
                 Log.keychain("Failed to persist regenerated management key after restart")
@@ -797,6 +802,9 @@ final class CLIProxyManager {
         }
         
         guard !proxyStatus.running else { return }
+
+        // Wait for any in-flight detached stop cleanup to finish before spawning a new process.
+        await waitForPendingStopCleanup()
         
         isStarting = true
         lastError = nil
@@ -924,51 +932,92 @@ final class CLIProxyManager {
     }
     
     func stop() {
+        let stopTargets = captureStopTargets()
+        _ = enqueueStopCleanup(for: stopTargets)
+    }
+
+    /// Stop proxy and wait until detached process/port cleanup completes.
+    private func stopAndWait() async {
+        let stopTargets = captureStopTargets()
+        let cleanupTask = enqueueStopCleanup(for: stopTargets)
+        await cleanupTask.value
+        await waitForPendingStopCleanup()
+    }
+
+    /// Capture state for stop and mark proxy as stopped immediately on MainActor.
+    private func captureStopTargets() -> (process: Process?, userPort: UInt16, bridgeMode: Bool, internalPort: UInt16) {
         terminateAuthProcess()
         stopHealthMonitor()
-        
-        // Stop ProxyBridge first if running
+
+        // Stop ProxyBridge first if running.
         if proxyBridge.isRunning {
             proxyBridge.stop()
         }
-        
-        // Run blocking operations in background to avoid freezing MainActor.
-        //
-        // Trade-off note: If start() is called immediately after stop(), there is a small
-        // window where the detached task could kill the newly started process (since
-        // killProcessOnPortSync kills by PORT, not PID). This is an acceptable trade-off
-        // because UI responsiveness is more important than this rare edge case.
-        // A 150ms buffer is added below to reduce (but not eliminate) this race window.
-        let currentProcess = process
-        let userPort = proxyStatus.port
-        let bridgeMode = useBridgeMode
-        let intPort = internalPort
-        
-        Task.detached(priority: .userInitiated) {
-            // Force terminate the main proxy process
-            if let proc = currentProcess, proc.isRunning {
-                let pid = proc.processIdentifier
-                proc.terminate()
-                
-                let deadline = Date().addingTimeInterval(2.0)
-                while proc.isRunning && Date() < deadline {
-                    usleep(100_000)  // 100ms, avoid Thread.sleep in async context
-                }
-                
-                if proc.isRunning {
-                    kill(pid, SIGKILL)
-                }
-            }
-            
-            // Kill processes on both ports
-            Self.killProcessOnPortSync(userPort)
-            if bridgeMode {
-                Self.killProcessOnPortSync(intPort)
-            }
-        }
-        
+
+        let captured = (
+            process: process,
+            userPort: proxyStatus.port,
+            bridgeMode: useBridgeMode,
+            internalPort: internalPort
+        )
+
         process = nil
         proxyStatus.running = false
+        return captured
+    }
+
+    /// Schedule stop cleanup on a background thread and track the latest task.
+    private func enqueueStopCleanup(for stopTargets: (process: Process?, userPort: UInt16, bridgeMode: Bool, internalPort: UInt16)) -> Task<Void, Never> {
+        stopCleanupGeneration += 1
+
+        let cleanupTask = Task.detached(priority: .userInitiated) {
+            Self.performStopCleanup(
+                process: stopTargets.process,
+                userPort: stopTargets.userPort,
+                bridgeMode: stopTargets.bridgeMode,
+                internalPort: stopTargets.internalPort
+            )
+        }
+
+        stopCleanupTask = cleanupTask
+        return cleanupTask
+    }
+
+    /// Wait for the newest scheduled stop cleanup task.
+    private func waitForPendingStopCleanup() async {
+        while let cleanupTask = stopCleanupTask {
+            let observedGeneration = stopCleanupGeneration
+            await cleanupTask.value
+
+            if stopCleanupGeneration == observedGeneration {
+                stopCleanupTask = nil
+                break
+            }
+        }
+    }
+
+    /// Detached stop cleanup implementation to avoid blocking MainActor.
+    nonisolated private static func performStopCleanup(process: Process?, userPort: UInt16, bridgeMode: Bool, internalPort: UInt16) {
+        // Force terminate the main proxy process.
+        if let proc = process, proc.isRunning {
+            let pid = proc.processIdentifier
+            proc.terminate()
+
+            let deadline = Date().addingTimeInterval(2.0)
+            while proc.isRunning && Date() < deadline {
+                usleep(100_000) // 100ms, avoid Thread.sleep in async context
+            }
+
+            if proc.isRunning {
+                kill(pid, SIGKILL)
+            }
+        }
+
+        // Kill processes on both ports.
+        Self.killProcessOnPortSync(userPort)
+        if bridgeMode {
+            Self.killProcessOnPortSync(internalPort)
+        }
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -1039,8 +1088,7 @@ final class CLIProxyManager {
                 Log.proxy("[CLIProxyManager] Max failures reached, auto-restarting proxy...")
                 healthCheckFailures = 0
                 
-                stop()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await stopAndWait()
                 
                 do {
                     try await start()
@@ -1750,7 +1798,7 @@ extension CLIProxyManager {
         // Stop the current active proxy if running
         let wasRunning = proxyStatus.running
         if wasRunning {
-            stop()
+            await stopAndWait()
         }
         
         // Update the current symlink
@@ -1778,7 +1826,7 @@ extension CLIProxyManager {
         // Stop current proxy
         let wasRunning = proxyStatus.running
         if wasRunning {
-            stop()
+            await stopAndWait()
         }
         
         // Delete the problematic current version if different from previous

@@ -30,6 +30,17 @@ xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS
 - UI 行为回归建议附截图和触发路径
 - 任何修复都要附 build/test 结果
 
+## 4.1 Review Queue 稳定性排查
+
+- 取消任务后若 `codex` 子进程未退出，优先排查：`Quotio/Services/CLIExecutor.swift`
+- Review Queue worker 并发窗口固定上限为 `8`，排查入口：`Quotio/Services/CodexReviewQueueService.swift`
+- 工作区路径输入时历史刷新采用 debounce + 后台 I/O，排查入口：
+  - `Quotio/Views/Screens/ReviewQueueScreen.swift`
+  - `Quotio/ViewModels/ReviewQueueViewModel.swift`
+- 若历史目录缺失 `summary.json`，阶段回退判定依赖 `config.json` 与 `aggregate.md/fix.md` 文件组合
+- 运行态观测优先看 Review Queue 的 `观测性` 面板（phase、耗时、事件流）
+- 单个 worker 的现场证据优先看对应 `worker-xx.md`、`worker-xx.stdout.log`、`worker-xx.stderr.log`
+
 ## 5. 文档同步要求
 
 调试路径、日志语义、验证命令变化时，必须同步更新：
