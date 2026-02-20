@@ -314,9 +314,28 @@ private struct UITestHarnessView: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private nonisolated(unsafe) var windowWillCloseObserver: NSObjectProtocol?
     private nonisolated(unsafe) var windowDidBecomeKeyObserver: NSObjectProtocol?
+    private var skipTerminationCleanup = false
+    private static let coreEventClass = fourCharCode("aevt")
+    private static let quitEventID = fourCharCode("quit")
+    private static let senderPIDAttribute = fourCharCode("spid")
+    private static let addressAttribute = fourCharCode("addr")
+    private static let originalAddressAttribute = fourCharCode("from")
+    private static let terminationTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if RuntimeMode.isRunningTests {
+            return
+        }
+
+        appendTerminationAudit("launch selfPID=\(ProcessInfo.processInfo.processIdentifier)")
+
+        // Multiple Quotio instances race on shared proxy ports/config and can trigger restart loops.
+        guard enforceSingleInstance() else {
             return
         }
 
@@ -377,6 +396,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        logTerminationRequestSource()
+        return .terminateNow
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // When user clicks dock icon or menubar "Open Quotio" and no visible windows
         if !flag {
@@ -395,18 +419,208 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    private func enforceSingleInstance() -> Bool {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            return true
+        }
+
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let otherInstances = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { $0.processIdentifier != currentPID }
+
+        guard let existingInstance = otherInstances.sorted(by: { $0.processIdentifier < $1.processIdentifier }).first else {
+            return true
+        }
+
+        _ = existingInstance.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        skipTerminationCleanup = true
+        appendTerminationAudit(
+            "duplicate_detected selfPID=\(currentPID), existingPID=\(existingInstance.processIdentifier), action=terminate_self"
+        )
+        Log.warning("[AppDelegate] Duplicate Quotio instance detected. Activating PID \(existingInstance.processIdentifier) and terminating PID \(currentPID).")
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
+        }
+        return false
+    }
+
+    private func logTerminationRequestSource() {
+        var details = ["selfPID=\(ProcessInfo.processInfo.processIdentifier)"]
+
+        if let event = NSAppleEventManager.shared().currentAppleEvent {
+            let eventClass = event.eventClass
+            let eventID = event.eventID
+            details.append("eventClass=\(Self.fourCharCodeString(eventClass))")
+            details.append("eventID=\(Self.fourCharCodeString(eventID))")
+
+            if eventClass == Self.coreEventClass && eventID == Self.quitEventID {
+                details.append("source=quit_apple_event")
+            } else {
+                details.append("source=apple_event")
+            }
+
+            if let senderPID = senderPID(from: event), senderPID > 0 {
+                details.append("senderPID=\(senderPID)")
+                if let senderApp = NSRunningApplication(processIdentifier: senderPID) {
+                    if let senderName = senderApp.localizedName {
+                        details.append("senderProcessName=\(senderName)")
+                    }
+                    if let senderBundleID = senderApp.bundleIdentifier {
+                        details.append("senderBundleID=\(senderBundleID)")
+                    }
+                }
+                if let snapshot = processSnapshot(pid: senderPID) {
+                    details.append("senderCmd=\(snapshot.command)")
+                    if snapshot.parentPID > 0, let parent = processSnapshot(pid: snapshot.parentPID) {
+                        details.append("senderParentPID=\(snapshot.parentPID)")
+                        details.append("senderParentCmd=\(parent.command)")
+                        if parent.parentPID > 0, let grandParent = processSnapshot(pid: parent.parentPID) {
+                            details.append("senderGrandParentPID=\(parent.parentPID)")
+                            details.append("senderGrandParentCmd=\(grandParent.command)")
+                        }
+                    }
+                }
+            } else {
+                details.append("senderPID=unknown")
+            }
+
+            let addressInfo = appleEventAddressSummary(from: event)
+            if !addressInfo.isEmpty {
+                details.append(addressInfo)
+            }
+        } else {
+            details.append("source=non_apple_event")
+        }
+
+        let summary = details.joined(separator: ", ")
+        appendTerminationAudit("termination_requested \(summary)")
+        Log.warning("[AppDelegate] Termination requested (\(summary))")
+    }
+
+    private func appendTerminationAudit(_ message: String) {
+        let supportDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+        let logURL = supportDirectory
+            .appendingPathComponent("Quotio", isDirectory: true)
+            .appendingPathComponent("logs", isDirectory: true)
+            .appendingPathComponent("quotio-termination.log", isDirectory: false)
+        let line = "[\(Self.terminationTimestampFormatter.string(from: Date()))] \(message)\n"
+
+        do {
+            try FileManager.default.createDirectory(
+                at: logURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
+
+            let handle = try FileHandle(forWritingTo: logURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(line.utf8))
+        } catch {
+            Log.warning("[AppDelegate] Failed to append termination audit: \(error.localizedDescription)")
+        }
+    }
+
+    private func senderPID(from event: NSAppleEventDescriptor) -> Int32? {
+        guard let descriptor = event.attributeDescriptor(forKeyword: Self.senderPIDAttribute) else {
+            return nil
+        }
+        let value = descriptor.int32Value
+        return value > 0 ? value : nil
+    }
+
+    private func appleEventAddressSummary(from event: NSAppleEventDescriptor) -> String {
+        var segments: [String] = []
+        if let address = event.attributeDescriptor(forKeyword: Self.addressAttribute) {
+            segments.append("address=\(Self.compactDescriptor(address))")
+        }
+        if let originalAddress = event.attributeDescriptor(forKeyword: Self.originalAddressAttribute) {
+            segments.append("from=\(Self.compactDescriptor(originalAddress))")
+        }
+        return segments.joined(separator: ", ")
+    }
+
+    private func processSnapshot(pid: Int32) -> (parentPID: Int32, command: String)? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-p", String(pid), "-o", "pid=,ppid=,command="]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                return nil
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let line = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !line.isEmpty else {
+                return nil
+            }
+            let fields = line.split(
+                maxSplits: 2,
+                omittingEmptySubsequences: true,
+                whereSeparator: \.isWhitespace
+            ).map(String.init)
+            guard fields.count >= 3,
+                  let parentPID = Int32(fields[1]) else {
+                return nil
+            }
+            return (parentPID: parentPID, command: fields[2])
+        } catch {
+            return nil
+        }
+    }
+
+    private static func compactDescriptor(_ descriptor: NSAppleEventDescriptor) -> String {
+        let raw = descriptor.stringValue ?? descriptor.description
+        return raw.count > 180 ? String(raw.prefix(180)) + "..." : raw
+    }
+
+    private static func fourCharCode(_ value: String) -> UInt32 {
+        value.utf8.reduce(0) { ($0 << 8) | UInt32($1) }
+    }
+
+    private static func fourCharCodeString(_ code: UInt32) -> String {
+        let bytes: [UInt8] = [
+            UInt8((code >> 24) & 0xFF),
+            UInt8((code >> 16) & 0xFF),
+            UInt8((code >> 8) & 0xFF),
+            UInt8(code & 0xFF)
+        ]
+        let printable = bytes.allSatisfy { 32...126 ~= $0 }
+        if printable {
+            return bytes.map { String(UnicodeScalar($0)) }.joined()
+        }
+        return String(format: "0x%08X", code)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if RuntimeMode.isRunningTests {
             return
         }
 
+        if skipTerminationCleanup {
+            appendTerminationAudit("will_terminate selfPID=\(ProcessInfo.processInfo.processIdentifier), skipCleanup=true")
+            return
+        }
+
+        appendTerminationAudit("will_terminate selfPID=\(ProcessInfo.processInfo.processIdentifier), skipCleanup=false")
         AppLifecycleState.isTerminating = true
 
         // Stop background polling
         AtomFeedUpdateService.shared.stopPolling()
 
-        CLIProxyManager.terminateProxyOnShutdown()
-        
+        // Keep CLIProxyAPI alive when Quotio exits.
+        // Proxy lifecycle is controlled explicitly by user actions in-app.
+
         // Use semaphore to ensure tunnel cleanup completes before app terminates
         // with a timeout to prevent hanging termination
         let semaphore = DispatchSemaphore(value: 0)
@@ -422,6 +636,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Fallback: force kill orphan processes if stopTunnel timed out
             TunnelManager.cleanupOrphans()
             Log.warning("[AppDelegate] Tunnel cleanup timed out, forced orphan cleanup")
+            appendTerminationAudit("will_terminate_cleanup timeout=true")
+        } else {
+            appendTerminationAudit("will_terminate_cleanup timeout=false")
         }
     }
 

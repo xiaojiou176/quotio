@@ -29,6 +29,50 @@ actor CLIExecutor {
     static let shared = CLIExecutor()
     
     private init() {}
+
+    private func buildExecutionEnvironment(
+        commandPath: String? = nil,
+        overrides: [String: String]? = nil
+    ) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let currentPathEntries = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        let expandedSearchPaths = searchPaths.map { NSString(string: $0).expandingTildeInPath }
+        let commandDirectory: [String]
+        if let commandPath {
+            commandDirectory = [URL(fileURLWithPath: commandPath).deletingLastPathComponent().path]
+        } else {
+            commandDirectory = []
+        }
+        let fallbackEntries = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ]
+
+        var seen = Set<String>()
+        let mergedPathEntries = (currentPathEntries + commandDirectory + expandedSearchPaths + fallbackEntries).filter { entry in
+            guard !entry.isEmpty else { return false }
+            if seen.contains(entry) {
+                return false
+            }
+            seen.insert(entry)
+            return true
+        }
+        environment["PATH"] = mergedPathEntries.joined(separator: ":")
+
+        if let overrides {
+            for (key, value) in overrides {
+                environment[key] = value
+            }
+        }
+        return environment
+    }
     
     /// Common CLI binary paths to search
     /// NOTE: Only checks file existence (metadata), does NOT read file content
@@ -146,13 +190,7 @@ actor CLIExecutor {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         
-        if let env = environment {
-            var processEnv = ProcessInfo.processInfo.environment
-            for (key, value) in env {
-                processEnv[key] = value
-            }
-            process.environment = processEnv
-        }
+        process.environment = buildExecutionEnvironment(commandPath: command, overrides: environment)
         
         if let workDir = workingDirectory {
             process.currentDirectoryURL = URL(fileURLWithPath: workDir)
@@ -286,24 +324,68 @@ actor CLIExecutor {
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         let inputPipe = Pipe()
-        
+        let outputHandle = outputPipe.fileHandleForReading
+        let errorHandle = errorPipe.fileHandleForReading
+        let captureQueue = DispatchQueue(label: "quotio.cliexecutor.capture")
+        var outputData = Data()
+        var errorData = Data()
+
         process.executableURL = URL(fileURLWithPath: binaryPath)
         process.arguments = arguments
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         process.standardInput = inputPipe
+        process.environment = buildExecutionEnvironment(commandPath: binaryPath)
         if let workingDirectory {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
-        
+
+        func installReadabilityHandlers() {
+            outputHandle.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                captureQueue.sync {
+                    outputData.append(chunk)
+                }
+            }
+            errorHandle.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                captureQueue.sync {
+                    errorData.append(chunk)
+                }
+            }
+        }
+
+        func finalizeCapturedOutput() -> (String, String) {
+            outputHandle.readabilityHandler = nil
+            errorHandle.readabilityHandler = nil
+            let remainingOutput = outputHandle.readDataToEndOfFile()
+            let remainingError = errorHandle.readDataToEndOfFile()
+            captureQueue.sync {
+                outputData.append(remainingOutput)
+                errorData.append(remainingError)
+            }
+            let output = String(data: outputData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+            return (output, errorOutput)
+        }
+
         do {
+            installReadabilityHandlers()
             try process.run()
             
             // Write input
             if let inputData = input.data(using: .utf8) {
                 inputPipe.fileHandleForWriting.write(inputData)
-                inputPipe.fileHandleForWriting.closeFile()
             }
+            inputPipe.fileHandleForWriting.closeFile()
             
             // Wait with timeout
             let deadline = Date().addingTimeInterval(timeout)
@@ -312,17 +394,19 @@ actor CLIExecutor {
                     try await Task.sleep(nanoseconds: 100_000_000)
                 } catch is CancellationError {
                     terminateProcessIfNeeded(process)
+                    let (output, errorOutput) = finalizeCapturedOutput()
                     return CLIExecutionResult(
-                        output: "",
-                        errorOutput: "Command cancelled",
+                        output: output,
+                        errorOutput: errorOutput.isEmpty ? "Command cancelled" : errorOutput,
                         exitCode: -2,
                         success: false
                     )
                 } catch {
                     terminateProcessIfNeeded(process)
+                    let (output, errorOutput) = finalizeCapturedOutput()
                     return CLIExecutionResult(
-                        output: "",
-                        errorOutput: error.localizedDescription,
+                        output: output,
+                        errorOutput: errorOutput.isEmpty ? error.localizedDescription : errorOutput,
                         exitCode: -1,
                         success: false
                     )
@@ -332,35 +416,37 @@ actor CLIExecutor {
             if process.isRunning {
                 if Task.isCancelled {
                     terminateProcessIfNeeded(process)
+                    let (output, errorOutput) = finalizeCapturedOutput()
                     return CLIExecutionResult(
-                        output: "",
-                        errorOutput: "Command cancelled",
+                        output: output,
+                        errorOutput: errorOutput.isEmpty ? "Command cancelled" : errorOutput,
                         exitCode: -2,
                         success: false
                     )
                 }
                 terminateProcessIfNeeded(process)
+                let (output, errorOutput) = finalizeCapturedOutput()
                 return CLIExecutionResult(
-                    output: "",
-                    errorOutput: "Command timed out",
+                    output: output,
+                    errorOutput: errorOutput.isEmpty ? "Command timed out" : errorOutput,
                     exitCode: -1,
                     success: false
                 )
             }
             
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let (output, errorOutput) = finalizeCapturedOutput()
             
             return CLIExecutionResult(
-                output: String(data: outputData, encoding: .utf8) ?? "",
-                errorOutput: String(data: errorData, encoding: .utf8) ?? "",
+                output: output,
+                errorOutput: errorOutput,
                 exitCode: process.terminationStatus,
                 success: process.terminationStatus == 0
             )
         } catch {
+            let (output, errorOutput) = finalizeCapturedOutput()
             return CLIExecutionResult(
-                output: "",
-                errorOutput: error.localizedDescription,
+                output: output,
+                errorOutput: errorOutput.isEmpty ? error.localizedDescription : errorOutput,
                 exitCode: -1,
                 success: false
             )

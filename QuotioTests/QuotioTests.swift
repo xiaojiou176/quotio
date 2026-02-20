@@ -270,6 +270,53 @@ final class QuotioTests: XCTestCase {
         XCTAssertTrue(result.errorOutput.localizedCaseInsensitiveContains("cancel"))
     }
 
+    func testCLIExecutorWithInputHandlesLargeStdoutWithoutBlocking() async {
+        let executor = CLIExecutor.shared
+        let result = await executor.executeCLIWithInput(
+            name: "bash",
+            arguments: ["-lc", "yes x | head -n 60000"],
+            input: "",
+            timeout: 5
+        )
+
+        XCTAssertTrue(result.success, "Expected command to succeed, got: \(result.errorOutput)")
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertFalse(result.output.isEmpty)
+        XCTAssertTrue(result.output.contains("x"))
+    }
+
+    func testResolveStartupPortsSkipsOccupiedPortInDirectMode() throws {
+        let occupiedPorts: Set<UInt16> = [8080, 8081]
+        let ports = try CLIProxyManager.resolveStartupPorts(
+            preferredUserPort: 8080,
+            bridgeEnabled: false,
+            isPortInUse: { occupiedPorts.contains($0) }
+        )
+        XCTAssertEqual(ports.userPort, 8082)
+        XCTAssertEqual(ports.cliProxyPort, 8082)
+    }
+
+    func testResolveStartupPortsSkipsWhenBridgeInternalPortIsOccupied() throws {
+        let occupiedPorts: Set<UInt16> = [8080, 18081]
+        let ports = try CLIProxyManager.resolveStartupPorts(
+            preferredUserPort: 8080,
+            bridgeEnabled: true,
+            isPortInUse: { occupiedPorts.contains($0) }
+        )
+        XCTAssertEqual(ports.userPort, 8082)
+        XCTAssertEqual(ports.cliProxyPort, 18082)
+    }
+
+    func testResolveStartupPortsThrowsWhenNoPortAvailable() {
+        XCTAssertThrowsError(
+            try CLIProxyManager.resolveStartupPorts(
+                preferredUserPort: UInt16.max,
+                bridgeEnabled: false,
+                isPortInUse: { _ in true }
+            )
+        )
+    }
+
     func testReviewQueueWorkerArgumentsRemainCompatibleWithCurrentCLI() {
         let config = makeReviewQueueConfigForCLICompatibility()
         let arguments = CodexReviewQueueService.reviewWorkerArguments(config: config)

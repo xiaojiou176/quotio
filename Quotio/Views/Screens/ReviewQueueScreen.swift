@@ -429,7 +429,18 @@ struct ReviewQueueScreen: View {
                         )
                     )
                 }
-                if let elapsed = elapsedText() {
+                if viewModel.isRunning {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        if let elapsed = elapsedText(referenceDate: context.date) {
+                            Text(
+                                "queue.observability.elapsed".localizedFormat(
+                                    fallback: "耗时: %@",
+                                    elapsed
+                                )
+                            )
+                        }
+                    }
+                } else if let elapsed = elapsedText(referenceDate: viewModel.runFinishedAt ?? Date()) {
                     Text(
                         "queue.observability.elapsed".localizedFormat(
                             fallback: "耗时: %@",
@@ -583,9 +594,9 @@ struct ReviewQueueScreen: View {
         return formatter.string(from: date)
     }
 
-    private func elapsedText() -> String? {
+    private func elapsedText(referenceDate: Date) -> String? {
         guard let started = viewModel.runStartedAt else { return nil }
-        let end = viewModel.runFinishedAt ?? Date()
+        let end = viewModel.runFinishedAt ?? referenceDate
         let total = max(0, Int(end.timeIntervalSince(started)))
         let minutes = total / 60
         let seconds = total % 60

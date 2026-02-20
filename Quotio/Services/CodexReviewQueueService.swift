@@ -193,13 +193,16 @@ actor CodexReviewQueueService {
                 let prompt = prompts[index]
                 group.addTask { [self] in
                     let workerId = index + 1
+                    let outputPath = jobURL.appendingPathComponent(String(format: "worker-%02d.md", workerId)).path
+                    let stdoutPath = jobURL.appendingPathComponent(String(format: "worker-%02d.stdout.log", workerId)).path
+                    let stderrPath = jobURL.appendingPathComponent(String(format: "worker-%02d.stderr.log", workerId)).path
                     var state = ReviewWorkerResult(
                         id: workerId,
                         prompt: prompt,
                         status: .running,
-                        outputPath: nil,
-                        stdoutPath: nil,
-                        stderrPath: nil,
+                        outputPath: outputPath,
+                        stdoutPath: stdoutPath,
+                        stderrPath: stderrPath,
                         error: nil
                     )
                     onEvent(.workerUpdated(state))
@@ -254,6 +257,10 @@ actor CodexReviewQueueService {
         let outputPath = jobURL.appendingPathComponent(String(format: "worker-%02d.md", workerId)).path
         let stdoutPath = jobURL.appendingPathComponent(String(format: "worker-%02d.stdout.log", workerId)).path
         let stderrPath = jobURL.appendingPathComponent(String(format: "worker-%02d.stderr.log", workerId)).path
+
+        FileManager.default.createFile(atPath: outputPath, contents: nil)
+        FileManager.default.createFile(atPath: stdoutPath, contents: nil)
+        FileManager.default.createFile(atPath: stderrPath, contents: nil)
 
         let arguments = Self.reviewWorkerArguments(config: config)
 

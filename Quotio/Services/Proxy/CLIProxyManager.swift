@@ -47,53 +47,7 @@ final class CLIProxyManager {
     }
     
     nonisolated static func terminateProxyOnShutdown() {
-        let savedPort = UserDefaults.standard.integer(forKey: "proxyPort")
-        let port = (savedPort > 0 && savedPort < 65536) ? UInt16(savedPort) : 8080
-        let useBridge = UserDefaults.standard.bool(forKey: "useBridgeMode")
-        
-        // Kill user-facing port
-        killProcessOnPort(port)
-        
-        // Only kill internal port if bridge mode is enabled
-        // to avoid accidentally killing unrelated services
-        if useBridge {
-            killProcessOnPort(ProxyBridge.internalPort(from: port))
-        }
-    }
-    
-    /// IMPORTANT: Excludes own PID to prevent killing Quotio itself when ProxyBridge is running.
-    nonisolated private static func killProcessOnPort(_ port: UInt16) {
-        let lsofProcess = Process()
-        lsofProcess.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        lsofProcess.arguments = ["-ti", "tcp:\(port)"]
-
-        let pipe = Pipe()
-        lsofProcess.standardOutput = pipe
-        lsofProcess.standardError = FileHandle.nullDevice
-
-        // Get own PID to avoid killing ourselves (ProxyBridge runs in our process)
-        let ownPid = ProcessInfo.processInfo.processIdentifier
-
-        do {
-            try lsofProcess.run()
-            lsofProcess.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !output.isEmpty else { return }
-
-            for pidString in output.components(separatedBy: .newlines) {
-                if let pid = Int32(pidString.trimmingCharacters(in: .whitespaces)) {
-                    // Never kill our own process - ProxyBridge uses NWListener in-process
-                    if pid == ownPid {
-                        Log.proxy("[CLIProxyManager] Skipping kill of own PID \(pid) on port \(port) during shutdown")
-                        continue
-                    }
-                    kill(pid, SIGKILL)
-                }
-            }
-        } catch {
-        }
+        // Intentionally no-op: never terminate external processes by port during app shutdown.
     }
     
     private var process: Process?
@@ -811,15 +765,22 @@ final class CLIProxyManager {
         
         defer { isStarting = false }
         
-        // Clean up any orphan processes from previous runs
-        await cleanupOrphanProcesses()
-        
         syncSecretKeyInConfig()
         syncProxyURLInConfig()
         syncCustomProvidersToConfig()
         
-        // Determine which port CLIProxyAPI should listen on
-        let cliProxyPort = useBridgeMode ? internalPort : proxyStatus.port
+        // Resolve runtime ports without killing existing listeners.
+        let bridgeEnabled = useBridgeMode
+        let (userPort, cliProxyPort) = try resolveStartupPorts(
+            preferredUserPort: proxyStatus.port,
+            bridgeEnabled: bridgeEnabled
+        )
+        if userPort != proxyStatus.port {
+            let previousPort = proxyStatus.port
+            proxyStatus.port = userPort
+            UserDefaults.standard.set(Int(userPort), forKey: "proxyPort")
+            Log.proxy("[CLIProxyManager] Port \(previousPort) occupied, auto-shifted to \(userPort)")
+        }
         
         // Update config to use the correct port
         updateConfigPort(cliProxyPort)
@@ -832,48 +793,19 @@ final class CLIProxyManager {
         process.arguments = ["-config", configPath]
         process.currentDirectoryURL = URL(fileURLWithPath: activeBinaryPath).deletingLastPathComponent()
         
-        // CRITICAL FIX: Drain stdout/stderr to prevent pipe buffer deadlock
-        // macOS pipe buffer is ~64KB. If CLIProxyAPI writes more without being read,
-        // the process blocks on write and becomes unresponsive (port open but no response).
-        // Solution: Use readabilityHandler to continuously drain the buffers.
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        
-        // Drain stdout buffer to prevent blocking
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            // Discard data to prevent memory accumulation
-            // If debug logging needed: Log.proxy("[CLIProxyAPI] \(String(data: data, encoding: .utf8) ?? "")")
-            _ = data.count
-        }
-        
-        // Drain stderr buffer to prevent blocking
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            // Discard data - errors are typically reported via exit code
-            _ = data.count
-        }
+        // Decouple child process stdio from Quotio lifecycle.
+        // If stdout/stderr are piped to the app process, app exit closes the pipe and
+        // CLIProxyAPI can terminate with SIGPIPE on next write.
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         
         // Important: Don't inherit environment that might cause issues
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
         process.environment = environment
         
-        let bridgeEnabled = useBridgeMode
-        let userPort = proxyStatus.port
-        
         process.terminationHandler = { terminatedProcess in
             let status = terminatedProcess.terminationStatus
-            
-            // Clear readability handlers to release closures and prevent resource leaks
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            
-            // Close file handles to release resources
-            try? outputPipe.fileHandleForReading.close()
-            try? errorPipe.fileHandleForReading.close()
             
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -1013,11 +945,7 @@ final class CLIProxyManager {
             }
         }
 
-        // Kill processes on both ports.
-        Self.killProcessOnPortSync(userPort)
-        if bridgeMode {
-            Self.killProcessOnPortSync(internalPort)
-        }
+        _ = (userPort, bridgeMode, internalPort)
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -1104,72 +1032,6 @@ final class CLIProxyManager {
     // ════════════════════════════════════════════════════════════════════════
     // MARK: - Process Cleanup
     // ════════════════════════════════════════════════════════════════════════
-    
-    /// Clean up any orphan proxy processes from previous runs.
-    /// Executes blocking operations on background thread to avoid blocking MainActor.
-    private func cleanupOrphanProcesses() async {
-        let userPort = proxyStatus.port
-        let bridgeMode = useBridgeMode
-        let intPort = internalPort
-        
-        // Execute blocking operations on background thread
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            Task.detached(priority: .userInitiated) {
-                // Kill any process on the user-facing port
-                Self.killProcessOnPortSync(userPort)
-                
-                // Only kill internal port if bridge mode is enabled
-                if bridgeMode {
-                    Self.killProcessOnPortSync(intPort)
-                    Log.proxy("[CLIProxyManager] Cleaned up orphan processes on ports \(userPort) and \(intPort)")
-                } else {
-                    Log.proxy("[CLIProxyManager] Cleaned up orphan processes on port \(userPort)")
-                }
-                
-                // Small delay to ensure ports are released
-                usleep(200_000)  // 200ms, avoid Thread.sleep in async context
-                continuation.resume()
-            }
-        }
-    }
-    
-    /// Synchronous port cleanup for use in detached tasks.
-    /// This method is `nonisolated` to allow calling from background threads.
-    /// IMPORTANT: Excludes own PID to prevent killing Quotio itself when ProxyBridge is running.
-    nonisolated private static func killProcessOnPortSync(_ port: UInt16) {
-        let lsofProcess = Process()
-        lsofProcess.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        lsofProcess.arguments = ["-ti", "tcp:\(port)"]
-
-        let pipe = Pipe()
-        lsofProcess.standardOutput = pipe
-        lsofProcess.standardError = FileHandle.nullDevice
-
-        // Get own PID to avoid killing ourselves (ProxyBridge runs in our process)
-        let ownPid = ProcessInfo.processInfo.processIdentifier
-
-        do {
-            try lsofProcess.run()
-            lsofProcess.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !output.isEmpty else { return }
-
-            for pidString in output.components(separatedBy: .newlines) {
-                if let pid = Int32(pidString.trimmingCharacters(in: .whitespaces)) {
-                    // Never kill our own process - ProxyBridge uses NWListener in-process
-                    if pid == ownPid {
-                        Log.proxy("[CLIProxyManager] Skipping kill of own PID \(pid) on port \(port)")
-                        continue
-                    }
-                    kill(pid, SIGKILL)
-                }
-            }
-        } catch {
-            // Silent failure - process may not exist
-        }
-    }
     
     func terminateAuthProcess() {
         guard let authProcess = authProcess, authProcess.isRunning else { return }
@@ -1871,10 +1733,6 @@ extension CLIProxyManager {
         
         testProcess = nil
         
-        // Also kill anything on test port
-        if let port = testPort {
-            Self.killProcessOnPortSync(port)
-        }
     }
     
     /// Synchronous version for use in defer blocks.
@@ -1899,12 +1757,40 @@ extension CLIProxyManager {
         
         testProcess = nil
         
-        // Also kill anything on test port
-        if let port = testPort {
-            Self.killProcessOnPortSync(port)
-        }
     }
     
+    private func resolveStartupPorts(preferredUserPort: UInt16, bridgeEnabled: Bool) throws -> (userPort: UInt16, cliProxyPort: UInt16) {
+        try Self.resolveStartupPorts(
+            preferredUserPort: preferredUserPort,
+            bridgeEnabled: bridgeEnabled,
+            isPortInUse: { [self] port in
+                isPortInUse(port)
+            }
+        )
+    }
+
+    nonisolated static func resolveStartupPorts(
+        preferredUserPort: UInt16,
+        bridgeEnabled: Bool,
+        isPortInUse: (UInt16) -> Bool
+    ) throws -> (userPort: UInt16, cliProxyPort: UInt16) {
+        for rawPort in Int(preferredUserPort)...Int(UInt16.max) {
+            let userPort = UInt16(rawPort)
+            if isPortInUse(userPort) {
+                continue
+            }
+            if !bridgeEnabled {
+                return (userPort, userPort)
+            }
+            let cliProxyPort = ProxyBridge.internalPort(from: userPort)
+            if cliProxyPort == userPort || isPortInUse(cliProxyPort) {
+                continue
+            }
+            return (userPort, cliProxyPort)
+        }
+        throw ProxyError.startupFailed
+    }
+
     private func findUnusedPort() throws -> UInt16 {
         // Try ports in range 18000-18100
         for port in UInt16(18000)...UInt16(18100) {
