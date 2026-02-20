@@ -28,6 +28,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **proxy**: serialize stop/start cleanup to prevent rapid restart loops
   - Track and await detached stop cleanup before next `start()`
   - Use `stopAndWait()` in restart and upgrade/recovery flows to avoid port-kill races
+- **app**: enforce single Quotio instance to avoid proxy lifecycle conflicts
+  - Detect duplicate app instances on launch and keep only one active controller
+  - Skip duplicate-instance shutdown cleanup to avoid killing a healthy shared proxy
+- **app**: add quit-source forensics logging for termination diagnosis
+  - Capture AppleEvent sender PID during `applicationShouldTerminate`
+  - Log sender/parent process commands to identify external `quit` initiators quickly
+- **app**: persist termination forensics to local file for post-mortem diagnosis
+  - Append launch/duplicate/terminate events to `~/Library/Application Support/Quotio/logs/quotio-termination.log`
+  - Keep quit source evidence available even when unified logging is unavailable
+- **review-queue**: fix `env: node: No such file or directory` in GUI-launched Codex workers
+  - Expand subprocess PATH for CLI execution (Homebrew/system/npm-global/nvm-style paths)
+  - Ensure child process environment includes the selected CLI binary directory
+- **review-queue**: prevent long-running worker stalls caused by pipe backpressure
+  - Stream `codex` child process stdout/stderr while running in `CLIExecutor.executeCLIWithInput(...)`
+  - Preserve partial output on timeout/cancel to improve failure diagnostics
+  - Pre-create worker output files as soon as worker enters `running`, so quick links are available immediately
+- **ui**: improve Review Queue observability heartbeat
+  - Elapsed timer now refreshes every second during active runs instead of only on event updates
+- **proxy**: never kill external processes on port conflict; auto-shift to next available port
+  - Remove port-based cleanup/termination on shutdown and stop paths
+  - Resolve startup port with collision-aware scanning (direct and bridge modes)
+  - Add unit tests for direct-mode shift, bridge internal-port collision shift, and exhausted-port failure
 
 ## [0.13.0] - 2026-02-15
 

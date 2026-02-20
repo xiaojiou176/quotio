@@ -33,6 +33,7 @@ xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS
 ## 4.1 Review Queue 稳定性排查
 
 - 取消任务后若 `codex` 子进程未退出，优先排查：`Quotio/Services/CLIExecutor.swift`
+- 若出现 `Worker running` 长时间不结束且日志几乎不更新，优先检查 `CLIExecutor` 的 stdout/stderr 消费是否正常（防止 pipe backpressure）
 - Review Queue worker 并发窗口固定上限为 `8`，排查入口：`Quotio/Services/CodexReviewQueueService.swift`
 - 工作区路径输入时历史刷新采用 debounce + 后台 I/O，排查入口：
   - `Quotio/Views/Screens/ReviewQueueScreen.swift`

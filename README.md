@@ -144,11 +144,15 @@ Documentation governance:
 - `CLIExecutor.executeCLIWithInput(...)` now handles task cancellation explicitly:
   - avoids cancellation-induced busy loops in wait polling
   - terminates (and force-kills if needed) the child process promptly on cancel
+- `CLIExecutor.executeCLIWithInput(...)` now streams stdout/stderr while the process is running:
+  - prevents large JSONL output from filling pipe buffers and stalling worker completion
+  - preserves partial output for timeout/cancel diagnostics
 - Review worker scheduling now uses a bounded concurrency window (`max 8`) instead of launching all prompts at once.
 - Workspace-history refresh no longer performs heavy directory scanning on every keystroke in the workspace input; typing path changes are debounced and resolved off the main thread.
 - History fallback phase inference (without `summary.json`) now treats aggregate-only runs (`runAggregate=true`, `runFix=false`) as completed when `aggregate.md` exists.
 - Review Queue UI now exposes clearer runtime telemetry:
   - live progress summary (`done/running/failed`)
+  - elapsed timer updates every second during active runs
   - per-worker quick links to `worker/stdout/stderr` outputs
   - dedicated observability panel with timestamped run-event timeline
 
