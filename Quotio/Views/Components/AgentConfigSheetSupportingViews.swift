@@ -147,11 +147,12 @@ struct ModelSlotRow: View {
                 Text("agents.unspecified".localized(fallback: "未指定"))
                     .tag("")
 
-                let providers = Set(availableModels.map { $0.provider }).sorted()
+                let groupedModels = Dictionary(grouping: availableModels) { $0.providerPresentation.displayLabel }
+                let providerLabels = groupedModels.keys.sorted()
 
-                ForEach(providers, id: \.self) { provider in
-                    Section(header: Text(provider.capitalized)) {
-                        ForEach(availableModels.filter { $0.provider == provider }) { model in
+                ForEach(providerLabels, id: \.self) { providerLabel in
+                    Section(header: Text(providerLabel)) {
+                        ForEach((groupedModels[providerLabel] ?? []).sorted { $0.displayName < $1.displayName }) { model in
                             Text(model.displayName)
                                 .tag(model.name)
                         }

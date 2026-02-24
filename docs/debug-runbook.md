@@ -13,7 +13,14 @@
 xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" build
 xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS" test
 ./scripts/test.sh
+./scripts/xcode-test-stable.sh
 ```
+
+稳定测试建议优先使用 `./scripts/xcode-test-stable.sh`：
+- 预检失败会立刻返回 `2`
+- 运行超时会强制终止并返回 `124`
+- 失败返回 `1`，通过返回 `0`
+- 日志与结果摘要自动落盘到 `.runtime-cache/test_output/quotio-xcode-test-stable/<timestamp>/`
 
 ## 3. 常见故障 -> 首查路径
 

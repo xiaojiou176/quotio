@@ -57,8 +57,39 @@ final class SettingsAuditTrail {
         return FileManager.default.temporaryDirectory
     }
 
-    private static func auditValue(_ value: String) -> String {
-        value
+    private static let sensitiveKeyNeedles: [String] = [
+        "authorization",
+        "cookie",
+        "x-api-key",
+        "api-key",
+        "apikey",
+        "token",
+        "password",
+        "secret",
+    ]
+
+    private static func shouldMaskValue(for key: String) -> Bool {
+        let normalized = key.lowercased()
+        return sensitiveKeyNeedles.contains { normalized.contains($0) }
+    }
+
+    private static func maskValue(_ value: String) -> String {
+        guard !value.isEmpty else { return value }
+
+        let chars = Array(value)
+        let count = chars.count
+        if count <= 4 {
+            return "[masked len=\(count) ***]"
+        }
+
+        let prefix = String(chars.prefix(2))
+        let suffix = String(chars.suffix(2))
+        return "[masked len=\(count) \(prefix)...\(suffix)]"
+    }
+
+    private static func auditValue(for key: String, value: String) -> String {
+        guard shouldMaskValue(for: key) else { return value }
+        return maskValue(value)
     }
 
     private var storageURL: URL {
@@ -76,8 +107,8 @@ final class SettingsAuditTrail {
     }
 
     func recordChange(key: String, oldValue: String, newValue: String, source: String) {
-        let rawOld = Self.auditValue(oldValue)
-        let rawNew = Self.auditValue(newValue)
+        let rawOld = Self.auditValue(for: key, value: oldValue)
+        let rawNew = Self.auditValue(for: key, value: newValue)
         guard rawOld != rawNew else { return }
         let event = SettingsAuditEvent(key: key, oldValue: rawOld, newValue: rawNew, source: source)
         events.insert(event, at: 0)

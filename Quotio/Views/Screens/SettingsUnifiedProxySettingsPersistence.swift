@@ -45,6 +45,9 @@ extension UnifiedProxySettingsSection {
             lastSwitchProjectValue = switchProject
             lastSwitchPreviewModelValue = switchPreviewModel
             proxyURLValidation = ProxyURLValidator.validate(proxyURL)
+
+            await loadCompatibilityConfigSnapshot(apiClient)
+            await refreshUpstreamHitCounts()
             isLoading = false
             
             try? await Task.sleep(for: .milliseconds(100))
@@ -54,6 +57,186 @@ extension UnifiedProxySettingsSection {
             isLoading = false
             isLoadingConfig = false
         }
+    }
+
+    func loadCompatibilityConfigSnapshot(_ apiClient: ManagementAPIClient) async {
+        do {
+            async let openAICompatibilityTask = apiClient.fetchOpenAICompatibility()
+            async let geminiAPIKeysTask = apiClient.fetchGeminiAPIKeys()
+            let (openAIEntries, geminiEntries) = try await (openAICompatibilityTask, geminiAPIKeysTask)
+            openAICompatibilityEntries = openAIEntries
+            geminiAPIKeyEntries = geminiEntries
+            refreshVertexRoutedUsageDraft()
+            compatibilityConfigLastUpdatedAt = Date()
+            compatibilityConfigLoadError = nil
+        } catch {
+            compatibilityConfigLoadError = error.localizedDescription
+            Log.warning("[RemoteSettings] Failed to load routed usage sources: \(error.localizedDescription)")
+        }
+    }
+
+    func startUpstreamHitAutoRefresh() {
+        stopUpstreamHitAutoRefresh()
+        upstreamHitAutoRefreshTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { return }
+                await refreshUpstreamHitCounts()
+            }
+        }
+    }
+
+    func stopUpstreamHitAutoRefresh() {
+        upstreamHitAutoRefreshTask?.cancel()
+        upstreamHitAutoRefreshTask = nil
+    }
+
+    func refreshUpstreamHitCounts() async {
+        guard !isLoadingUpstreamHitCounts else { return }
+        guard let apiClient = viewModel.apiClient else {
+            upstreamHitLoadError = modeManager.isLocalProxyMode
+                ? "settings.proxy.startToConfigureAdvanced".localized()
+                : "settings.remote.noConnection".localized()
+            return
+        }
+
+        isLoadingUpstreamHitCounts = true
+        defer { isLoadingUpstreamHitCounts = false }
+
+        do {
+            let events = try await apiClient.fetchUsageEvents(sinceSeq: 0, limit: 1500)
+            let snapshot = Self.calculateUpstreamHitWindowSnapshot(events: events, now: Date())
+            upstreamHitCounts = snapshot.current
+            upstreamHitPreviousCounts = snapshot.previous
+            upstreamHitLastUpdatedAt = Date()
+            upstreamHitLoadError = nil
+        } catch {
+            upstreamHitLoadError = error.localizedDescription
+            Log.warning("[RemoteSettings] Failed to load upstream hit counts: \(error.localizedDescription)")
+        }
+    }
+
+    enum UpstreamHitType {
+        case vertex
+        case v0
+        case gemini
+        case other
+    }
+
+    private func classifyUpstreamHit(_ event: SSERequestEvent) -> UpstreamHitType {
+        Self.classifyUpstreamHit(
+            provider: event.provider,
+            model: event.model,
+            source: event.source,
+            authFile: event.authFile
+        )
+    }
+
+    nonisolated static func classifyUpstreamHit(
+        provider: String?,
+        model: String?,
+        source: String?,
+        authFile: String?
+    ) -> UpstreamHitType {
+        let fields = [
+            normalizedHitField(provider),
+            normalizedHitField(model),
+            normalizedHitField(source),
+            normalizedHitField(authFile)
+        ]
+
+        if fields.contains(where: { containsToken($0, token: "vertex") || $0.contains("aiplatform.googleapis.com") }) {
+            return .vertex
+        }
+        if fields.contains(where: { containsToken($0, token: "gemini") }) {
+            return .gemini
+        }
+        if fields.contains(where: { containsToken($0, token: "v0") || $0.contains("v0.dev") }) {
+            return .v0
+        }
+        return .other
+    }
+
+    private nonisolated static func normalizedHitField(_ raw: String?) -> String {
+        raw?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+    }
+
+    private nonisolated static func containsToken(_ value: String, token: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        let components = value.split { !$0.isLetter && !$0.isNumber }
+        return components.contains(where: { String($0) == token })
+    }
+
+    nonisolated static func calculateUpstreamHitWindowSnapshot(
+        events: [SSERequestEvent],
+        now: Date
+    ) -> (current: UpstreamHitCounts, previous: UpstreamHitCounts) {
+        let currentWindowStart = now.addingTimeInterval(-15 * 60)
+        let previousWindowStart = now.addingTimeInterval(-30 * 60)
+        var current = UpstreamHitCounts()
+        var previous = UpstreamHitCounts()
+
+        for event in events {
+            guard event.type == "request", let eventDate = event.date else {
+                continue
+            }
+
+            if eventDate >= currentWindowStart {
+                switch classifyUpstreamHit(
+                    provider: event.provider,
+                    model: event.model,
+                    source: event.source,
+                    authFile: event.authFile
+                ) {
+                case .vertex:
+                    current.vertex += 1
+                case .v0:
+                    current.v0 += 1
+                case .gemini:
+                    current.gemini += 1
+                case .other:
+                    continue
+                }
+            } else if eventDate >= previousWindowStart {
+                switch classifyUpstreamHit(
+                    provider: event.provider,
+                    model: event.model,
+                    source: event.source,
+                    authFile: event.authFile
+                ) {
+                case .vertex:
+                    previous.vertex += 1
+                case .v0:
+                    previous.v0 += 1
+                case .gemini:
+                    previous.gemini += 1
+                case .other:
+                    continue
+                }
+            } else {
+                continue
+            }
+        }
+
+        return (current, previous)
+    }
+
+    nonisolated static func upstreamHitTrendSymbol(current: Int, previous: Int) -> String {
+        if current > previous { return "↑" }
+        if current < previous { return "↓" }
+        return "→"
+    }
+
+    nonisolated static func upstreamHitShare(count: Int, total: Int) -> Double {
+        guard total > 0 else { return 0 }
+        return Double(count) / Double(total)
+    }
+
+    nonisolated static func upstreamHitShareText(count: Int, total: Int) -> String {
+        let percentage = upstreamHitShare(count: count, total: total) * 100
+        return String(format: "%.0f%%", percentage)
     }
     
     /// Persists the upstream proxy URL to both UserDefaults and the running proxy instance.
@@ -299,6 +482,63 @@ extension UnifiedProxySettingsSection {
                 isError: true
             )
             Log.error("[RemoteSettings] Failed to save debug mode: \(error)")
+        }
+    }
+
+    func saveVertexRoutedUsageSource() async {
+        guard !isSavingVertexRouteSource else { return }
+        guard let apiClient = viewModel.apiClient else {
+            showFeedback("settings.remote.noConnection".localized(fallback: "当前未连接远端，无法保存设置。"), isError: true)
+            return
+        }
+        guard let targetIndex = vertexPrimaryCandidateIndex else {
+            showFeedback("settings.vertexRoutedUsage.noVertexEntry".localized(fallback: "未找到可编辑的 Vertex 路由条目。"), isError: true)
+            return
+        }
+        guard let normalizedBaseURL = Self.normalizedHTTPURLString(vertexEditableBaseURL) else {
+            showFeedback(
+                "settings.vertexRoutedUsage.baseURLInvalid".localized(fallback: "base-url 必须是合法 http/https URL。"),
+                isError: true
+            )
+            return
+        }
+
+        let normalizedName = vertexEditableDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPrefix = vertexEditablePrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previousEntries = openAICompatibilityEntries
+        let previousTarget = previousEntries[targetIndex]
+        var updatedEntries = previousEntries
+        updatedEntries[targetIndex] = OpenAICompatibilityEntry(
+            name: normalizedName.isEmpty ? nil : normalizedName,
+            prefix: normalizedPrefix.isEmpty ? nil : normalizedPrefix,
+            baseURL: normalizedBaseURL,
+            apiKeyEntries: previousTarget.apiKeyEntries
+        )
+
+        isSavingVertexRouteSource = true
+        defer { isSavingVertexRouteSource = false }
+
+        do {
+            try await apiClient.replaceOpenAICompatibility(updatedEntries)
+            await loadCompatibilityConfigSnapshot(apiClient)
+            showFeedback(
+                "settings.vertexRoutedUsage.saveSuccess".localized(fallback: "Vertex 路由来源已保存并刷新。")
+            )
+            settingsAudit.recordChange(
+                key: "openai_compatibility.vertex_source",
+                oldValue: previousTarget.baseURL ?? "",
+                newValue: normalizedBaseURL,
+                source: "settings.unified_proxy"
+            )
+        } catch {
+            openAICompatibilityEntries = previousEntries
+            showFeedback(
+                "settings.vertexRoutedUsage.saveFailed".localized(fallback: "Vertex 路由来源保存失败")
+                    + ": "
+                    + error.localizedDescription,
+                isError: true
+            )
+            Log.error("[RemoteSettings] Failed to persist Vertex routed usage source: \(error)")
         }
     }
 

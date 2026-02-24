@@ -14,6 +14,159 @@ final class QuotioTests: XCTestCase {
         XCTAssertEqual(Set(normalized).count, slugs.count)
     }
 
+    func testAvailableModelProviderPresentationUsesVertexClaudeForVertexLiteOwner() {
+        let presentation = AvailableModel.providerPresentation(
+            rawProvider: "vertex-lite",
+            modelId: "claude-sonnet-4-5"
+        )
+
+        XCTAssertEqual(presentation.displayLabel, "Vertex Claude")
+        XCTAssertEqual(presentation.iconProvider, .vertex)
+    }
+
+    func testAvailableModelProviderPresentationUsesVertexClaudeForVertexSonnetModel() {
+        let presentation = AvailableModel.providerPresentation(
+            rawProvider: "anthropic",
+            modelId: "vertex-sonnet-4-5"
+        )
+
+        XCTAssertEqual(presentation.displayLabel, "Vertex Claude")
+        XCTAssertEqual(presentation.iconProvider, .vertex)
+    }
+
+    func testAvailableModelProviderPresentationKeepsRegularClaudeMapping() {
+        let presentation = AvailableModel.providerPresentation(
+            rawProvider: "anthropic",
+            modelId: "claude-sonnet-4-5"
+        )
+
+        XCTAssertNotEqual(presentation.displayLabel, "Vertex Claude")
+        XCTAssertEqual(presentation.iconProvider, .claude)
+    }
+
+    @MainActor
+    func testUpstreamHitClassifierCountsVertex() {
+        let kind = UnifiedProxySettingsSection.classifyUpstreamHit(
+            provider: "openai",
+            model: "vertex-sonnet-4-5",
+            source: nil,
+            authFile: nil
+        )
+        XCTAssertEqual(kind, .vertex)
+    }
+
+    @MainActor
+    func testUpstreamHitClassifierCountsV0() {
+        let kind = UnifiedProxySettingsSection.classifyUpstreamHit(
+            provider: "custom",
+            model: "custom-model",
+            source: "v0.dev",
+            authFile: nil
+        )
+        XCTAssertEqual(kind, .v0)
+    }
+
+    @MainActor
+    func testUpstreamHitClassifierCountsGemini() {
+        let kind = UnifiedProxySettingsSection.classifyUpstreamHit(
+            provider: "google",
+            model: "gemini-2.5-pro",
+            source: nil,
+            authFile: nil
+        )
+        XCTAssertEqual(kind, .gemini)
+    }
+
+    @MainActor
+    func testUpstreamHitClassifierIgnoresUnrelatedModel() {
+        let kind = UnifiedProxySettingsSection.classifyUpstreamHit(
+            provider: "openai",
+            model: "gpt-5.3-codex",
+            source: "codex-cli",
+            authFile: "default"
+        )
+        XCTAssertEqual(kind, .other)
+    }
+
+    @MainActor
+    func testUpstreamHitWindowSnapshotSeparatesCurrentAndPreviousWindows() {
+        let now = Date(timeIntervalSince1970: 1_768_000_000)
+        let currentVertex = SSERequestEvent(
+            type: "request",
+            seq: nil,
+            eventId: nil,
+            timestamp: ISO8601DateFormatter().string(from: now.addingTimeInterval(-5 * 60)),
+            requestId: nil,
+            provider: "openai",
+            model: "vertex-sonnet-4-5",
+            authFile: nil,
+            source: nil,
+            success: true,
+            tokens: nil,
+            latencyMs: nil,
+            error: nil
+        )
+        let previousGemini = SSERequestEvent(
+            type: "request",
+            seq: nil,
+            eventId: nil,
+            timestamp: ISO8601DateFormatter().string(from: now.addingTimeInterval(-20 * 60)),
+            requestId: nil,
+            provider: "google",
+            model: "gemini-2.5-pro",
+            authFile: nil,
+            source: nil,
+            success: true,
+            tokens: nil,
+            latencyMs: nil,
+            error: nil
+        )
+        let oldV0 = SSERequestEvent(
+            type: "request",
+            seq: nil,
+            eventId: nil,
+            timestamp: ISO8601DateFormatter().string(from: now.addingTimeInterval(-40 * 60)),
+            requestId: nil,
+            provider: "custom",
+            model: "v0",
+            authFile: nil,
+            source: "v0.dev",
+            success: true,
+            tokens: nil,
+            latencyMs: nil,
+            error: nil
+        )
+
+        let snapshot = UnifiedProxySettingsSection.calculateUpstreamHitWindowSnapshot(
+            events: [currentVertex, previousGemini, oldV0],
+            now: now
+        )
+
+        XCTAssertEqual(snapshot.current.vertex, 1)
+        XCTAssertEqual(snapshot.current.gemini, 0)
+        XCTAssertEqual(snapshot.previous.gemini, 1)
+        XCTAssertEqual(snapshot.previous.v0, 0)
+    }
+
+    @MainActor
+    func testUpstreamHitTrendAndShareHelpers() {
+        XCTAssertEqual(
+            UnifiedProxySettingsSection.upstreamHitTrendSymbol(current: 5, previous: 2),
+            "↑"
+        )
+        XCTAssertEqual(
+            UnifiedProxySettingsSection.upstreamHitTrendSymbol(current: 1, previous: 3),
+            "↓"
+        )
+        XCTAssertEqual(
+            UnifiedProxySettingsSection.upstreamHitTrendSymbol(current: 4, previous: 4),
+            "→"
+        )
+
+        XCTAssertEqual(UnifiedProxySettingsSection.upstreamHitShare(count: 0, total: 0), 0)
+        XCTAssertEqual(UnifiedProxySettingsSection.upstreamHitShareText(count: 1, total: 4), "25%")
+    }
+
     func testProxyURLSanitizeRemovesCredentialsAndTrailingSlash() {
         let raw = "  http://alice:secret@example.com:8080/proxy/  "
         let sanitized = ProxyURLValidator.sanitize(raw)

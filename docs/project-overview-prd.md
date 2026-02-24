@@ -2,7 +2,7 @@
 
 > **Last Updated**: February 17, 2026
 > **Version**: 1.0.0
-> **Platform**: macOS 14.0+ (Sonoma)
+> **Platform**: macOS 15.0+ (Sequoia)
 
 ---
 
@@ -252,7 +252,7 @@ Lightweight mode for quota monitoring without proxy overhead:
 
 | Requirement | Version |
 |-------------|---------|
-| **macOS** | 14.0 (Sonoma) or later |
+| **macOS** | 15.0 (Sequoia) or later |
 | **Xcode** (for development) | 16.0+ |
 | **Swift** (for development) | 6.0+ |
 

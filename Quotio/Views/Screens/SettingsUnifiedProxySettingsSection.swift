@@ -25,6 +25,23 @@ struct UnifiedProxySettingsSection: View {
     @State var loggingToFile = true
     @State var requestLog = false
     @State var debugMode = false
+    @State var openAICompatibilityEntries: [OpenAICompatibilityEntry] = []
+    @State var geminiAPIKeyEntries: [GeminiAPIKeyEntry] = []
+    @State var compatibilityConfigLoadError: String?
+    @State var compatibilityConfigLastUpdatedAt: Date?
+    @State var upstreamHitCounts = UpstreamHitCounts()
+    @State var upstreamHitPreviousCounts = UpstreamHitCounts()
+    @State var isLoadingUpstreamHitCounts = false
+    @State var upstreamHitLoadError: String?
+    @State var upstreamHitLastUpdatedAt: Date?
+    @State var upstreamHitAutoRefreshTask: Task<Void, Never>?
+    @State var vertexEditableDisplayName = ""
+    @State var vertexEditablePrefix = ""
+    @State var vertexEditableBaseURL = ""
+    @State var vertexOriginalDisplayName = ""
+    @State var vertexOriginalPrefix = ""
+    @State var vertexOriginalBaseURL = ""
+    @State var isSavingVertexRouteSource = false
     @State var lastProxyURLValue = ""
     @State var lastRoutingStrategyValue = "round-robin"
     @State var lastSwitchProjectValue = true
@@ -58,6 +75,12 @@ struct UnifiedProxySettingsSection: View {
         case delete(namespace: String)
         case retrySync
     }
+
+    struct UpstreamHitCounts: Sendable {
+        var vertex = 0
+        var v0 = 0
+        var gemini = 0
+    }
     
     /// Check if API is available (proxy running for local, or connected for remote)
     var isAPIAvailable: Bool {
@@ -78,6 +101,71 @@ struct UnifiedProxySettingsSection: View {
         modeManager.isLocalProxyMode 
             ? "settings.proxySettings".localized()
             : "settings.remoteProxySettings".localized()
+    }
+
+    var vertexCandidateOpenAIEntries: [OpenAICompatibilityEntry] {
+        openAICompatibilityEntries.filter { entry in
+            Self.isLikelyVertexSource(entry.name)
+                || Self.isLikelyVertexSource(entry.baseURL)
+                || Self.isLikelyVertexSource(entry.prefix)
+        }
+    }
+
+    var vertexPrimaryCandidateIndex: Int? {
+        if let nameMatched = openAICompatibilityEntries.firstIndex(where: { Self.isLikelyVertexSource($0.name) }) {
+            return nameMatched
+        }
+        if let prefixMatched = openAICompatibilityEntries.firstIndex(where: { Self.isLikelyVertexSource($0.prefix) }) {
+            return prefixMatched
+        }
+        return openAICompatibilityEntries.firstIndex(where: { Self.isLikelyVertexSource($0.baseURL) })
+    }
+
+    var vertexPrimaryCandidate: OpenAICompatibilityEntry? {
+        guard let index = vertexPrimaryCandidateIndex else { return nil }
+        return openAICompatibilityEntries[index]
+    }
+
+    var openAICompatibilityCredentialCount: Int {
+        openAICompatibilityEntries.reduce(0) { partial, entry in
+            partial + (entry.apiKeyEntries?.count ?? 0)
+        }
+    }
+
+    var vertexRoutedUsageSourceSummary: String {
+        let sourceLine = "openai-compatibility: \(openAICompatibilityEntries.count) / gemini-api-key: \(geminiAPIKeyEntries.count)"
+        return "Routed Usage，非官方剩余额度 · \(sourceLine)"
+    }
+
+    var isVertexBaseURLValid: Bool {
+        Self.normalizedHTTPURLString(vertexEditableBaseURL) != nil
+    }
+
+    var vertexBaseURLValidationMessage: String? {
+        let trimmed = vertexEditableBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "settings.vertexRoutedUsage.baseURLRequired".localized(fallback: "请填写 base-url。")
+        }
+        guard isVertexBaseURLValid else {
+            return "settings.vertexRoutedUsage.baseURLInvalid".localized(fallback: "base-url 必须是合法 http/https URL。")
+        }
+        return nil
+    }
+
+    var isVertexSourceDraftDirty: Bool {
+        let currentName = vertexEditableDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentPrefix = vertexEditablePrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentBaseURL = vertexEditableBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return currentName != vertexOriginalDisplayName
+            || currentPrefix != vertexOriginalPrefix
+            || currentBaseURL != vertexOriginalBaseURL
+    }
+
+    var isVertexSourceSaveDisabled: Bool {
+        isSavingVertexRouteSource
+            || vertexPrimaryCandidateIndex == nil
+            || !isVertexBaseURLValid
+            || !isVertexSourceDraftDirty
     }
 
     var parsedHybridMappingModelSet: [String] {
@@ -209,6 +297,8 @@ struct UnifiedProxySettingsSection: View {
             } else {
                 upstreamProxySection
                 routingStrategySection
+                vertexRoutedUsageSourceSection
+                upstreamHitRealtimePanelSection
                 hybridNamespaceModelSetSection
                 quotaExceededSection
                 retryConfigurationSection
@@ -296,6 +386,15 @@ struct UnifiedProxySettingsSection: View {
         }
         .onDisappear {
             feedbackDismissTask?.cancel()
+            stopUpstreamHitAutoRefresh()
+        }
+        .task(id: isAPIAvailable) {
+            if isAPIAvailable {
+                startUpstreamHitAutoRefresh()
+                await refreshUpstreamHitCounts()
+            } else {
+                stopUpstreamHitAutoRefresh()
+            }
         }
     }
 
@@ -511,6 +610,231 @@ struct UnifiedProxySettingsSection: View {
             .font(.caption)
         }
     }
+
+    var vertexRoutedUsageSourceSection: some View {
+        Section {
+            LabeledContent("settings.vertexRoutedUsage.sources".localized(fallback: "配置来源")) {
+                Text(vertexRoutedUsageSourceSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LabeledContent("settings.vertexRoutedUsage.openaiCompat".localized(fallback: "openai-compatibility 条目")) {
+                Text("\(openAICompatibilityEntries.count)")
+            }
+
+            LabeledContent("settings.vertexRoutedUsage.vertexCandidates".localized(fallback: "疑似 Vertex 路由条目")) {
+                Text("\(vertexCandidateOpenAIEntries.count)")
+            }
+
+            if vertexPrimaryCandidate != nil {
+                LabeledContent("settings.vertexRoutedUsage.primaryCandidate".localized(fallback: "主 Vertex 条目")) {
+                    Text("\((vertexPrimaryCandidateIndex ?? 0) + 1)")
+                }
+
+                LabeledContent("settings.vertexRoutedUsage.displayName".localized(fallback: "display name")) {
+                    TextField(
+                        "settings.vertexRoutedUsage.displayNamePlaceholder".localized(fallback: "可选"),
+                        text: $vertexEditableDisplayName
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                }
+
+                LabeledContent("settings.vertexRoutedUsage.prefix".localized(fallback: "prefix")) {
+                    TextField(
+                        "settings.vertexRoutedUsage.prefixPlaceholder".localized(fallback: "可选"),
+                        text: $vertexEditablePrefix
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                }
+
+                LabeledContent("settings.vertexRoutedUsage.baseURL".localized(fallback: "base-url")) {
+                    TextField(
+                        "https://...",
+                        text: $vertexEditableBaseURL
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 320)
+                }
+
+                if let validationMessage = vertexBaseURLValidationMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.semanticWarning)
+                        Text(validationMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task {
+                            await saveVertexRoutedUsageSource()
+                        }
+                    } label: {
+                        if isSavingVertexRouteSource {
+                            HStack(spacing: 6) {
+                                SmallProgressView()
+                                Text("action.saving".localized(fallback: "保存中"))
+                            }
+                        } else {
+                            Text("action.save".localized(fallback: "保存"))
+                        }
+                    }
+                    .disabled(isVertexSourceSaveDisabled)
+
+                    if isVertexSourceDraftDirty && !isSavingVertexRouteSource {
+                        Button("action.reset".localized(fallback: "重置")) {
+                            refreshVertexRoutedUsageDraft()
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            } else {
+                Text("settings.vertexRoutedUsage.noVertexEntry".localized(fallback: "未找到可编辑的 Vertex 路由条目。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LabeledContent("settings.vertexRoutedUsage.openaiCompatCreds".localized(fallback: "openai-compatibility 凭据数")) {
+                Text("\(openAICompatibilityCredentialCount)")
+            }
+
+            LabeledContent("settings.vertexRoutedUsage.geminiKeys".localized(fallback: "gemini-api-key 条目")) {
+                Text("\(geminiAPIKeyEntries.count)")
+            }
+
+            if let compatibilityConfigLastUpdatedAt {
+                LabeledContent("settings.vertexRoutedUsage.updatedAt".localized(fallback: "最近刷新")) {
+                    Text(compatibilityConfigLastUpdatedAt.formatted(date: .abbreviated, time: .shortened))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let compatibilityConfigLoadError, !compatibilityConfigLoadError.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.semanticWarning)
+                    Text(
+                        String(
+                            format: "settings.vertexRoutedUsage.loadError".localized(fallback: "配置读取失败：%@"),
+                            compatibilityConfigLoadError
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Label(
+                "settings.vertexRoutedUsage.title".localized(fallback: "Vertex Routed Usage（非官方剩余额度）"),
+                systemImage: "chart.bar.xaxis"
+            )
+        } footer: {
+            Text(
+                "settings.vertexRoutedUsage.help".localized(
+                    fallback: "此处展示 Routed Usage 的配置来源快照，仅用于路由排查与运营观察，不代表官方剩余额度。"
+                )
+            )
+            .font(.caption)
+        }
+    }
+
+    var upstreamHitRealtimePanelSection: some View {
+        Section {
+            let currentTotal = upstreamHitCounts.vertex + upstreamHitCounts.v0 + upstreamHitCounts.gemini
+            HStack(spacing: 12) {
+                upstreamHitMetricPill(
+                    title: "Vertex",
+                    count: upstreamHitCounts.vertex,
+                    previousCount: upstreamHitPreviousCounts.vertex,
+                    totalCount: currentTotal,
+                    color: .semanticDanger
+                )
+                upstreamHitMetricPill(
+                    title: "V0",
+                    count: upstreamHitCounts.v0,
+                    previousCount: upstreamHitPreviousCounts.v0,
+                    totalCount: currentTotal,
+                    color: .semanticAccentSecondary
+                )
+                upstreamHitMetricPill(
+                    title: "Gemini",
+                    count: upstreamHitCounts.gemini,
+                    previousCount: upstreamHitPreviousCounts.gemini,
+                    totalCount: currentTotal,
+                    color: .semanticInfo
+                )
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await refreshUpstreamHitCounts() }
+                } label: {
+                    if isLoadingUpstreamHitCounts {
+                        HStack(spacing: 6) {
+                            SmallProgressView()
+                            Text("action.refreshing".localized(fallback: "刷新中"))
+                        }
+                    } else {
+                        Label("action.refresh".localized(fallback: "刷新"), systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(isLoadingUpstreamHitCounts)
+
+                Spacer()
+
+                if let upstreamHitLastUpdatedAt {
+                    Text(
+                        String(
+                            format: "settings.vertexHitPanel.updatedAt".localized(fallback: "最近更新时间：%@"),
+                            upstreamHitLastUpdatedAt.formatted(date: .abbreviated, time: .shortened)
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else if isLoadingUpstreamHitCounts {
+                    Text("settings.vertexHitPanel.loading".localized(fallback: "正在加载命中数据..."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("settings.vertexHitPanel.notLoaded".localized(fallback: "尚未加载命中数据"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let upstreamHitLoadError, !upstreamHitLoadError.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.semanticWarning)
+                    Text(
+                        String(
+                            format: "settings.vertexHitPanel.loadError".localized(fallback: "命中计数加载失败：%@"),
+                            upstreamHitLoadError
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Label(
+                "settings.vertexHitPanel.title".localized(fallback: "当前命中上游实时计数"),
+                systemImage: "bolt.horizontal.circle"
+            )
+        } footer: {
+            Text(
+                "settings.vertexHitPanel.help".localized(
+                    fallback: "统计窗口：最近 15 分钟。优先按 provider/model/source 识别上游；无法明确识别的事件会归类为 other 并忽略，不计入三类命中。"
+                )
+            )
+            .font(.caption)
+        }
+    }
     
     var retryConfigurationSection: some View {
         Section {
@@ -559,5 +883,82 @@ struct UnifiedProxySettingsSection: View {
                 .font(.caption)
         }
     }
-    
+
+    private static func isLikelyVertexSource(_ value: String?) -> Bool {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else {
+            return false
+        }
+        return raw.contains("vertex")
+            || raw.contains("aiplatform.googleapis.com")
+            || raw.contains("googleapis.com")
+    }
+
+    static func normalizedHTTPURLString(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              url.host != nil else {
+            return nil
+        }
+        return trimmed
+    }
+
+    func refreshVertexRoutedUsageDraft() {
+        guard let candidate = vertexPrimaryCandidate else {
+            vertexEditableDisplayName = ""
+            vertexEditablePrefix = ""
+            vertexEditableBaseURL = ""
+            vertexOriginalDisplayName = ""
+            vertexOriginalPrefix = ""
+            vertexOriginalBaseURL = ""
+            return
+        }
+
+        let normalizedName = candidate.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedPrefix = candidate.prefix?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedBaseURL = candidate.baseURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        vertexEditableDisplayName = normalizedName
+        vertexEditablePrefix = normalizedPrefix
+        vertexEditableBaseURL = normalizedBaseURL
+        vertexOriginalDisplayName = normalizedName
+        vertexOriginalPrefix = normalizedPrefix
+        vertexOriginalBaseURL = normalizedBaseURL
+    }
+
+    @ViewBuilder
+    private func upstreamHitMetricPill(
+        title: String,
+        count: Int,
+        previousCount: Int,
+        totalCount: Int,
+        color: Color
+    ) -> some View {
+        let trendSymbol = Self.upstreamHitTrendSymbol(current: count, previous: previousCount)
+        let shareText = Self.upstreamHitShareText(count: count, total: totalCount)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(count)")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(color)
+                Text(shareText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(trendSymbol)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
 }

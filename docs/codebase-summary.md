@@ -1,8 +1,9 @@
 # Quotio - Codebase Summary
 
-> **Last Updated**: January 2, 2025  
+> **Last Updated**: February 21, 2026  
 > **Swift Version**: 6.0  
 > **Minimum macOS**: 15.0 (Sequoia)
+> **Docs Index**: `docs/README.md`
 
 ---
 

@@ -139,47 +139,9 @@ struct AddFallbackEntrySheet: View {
         filteredModels.first { $0.id == selectedModelId }
     }
 
-    /// Maps a model to its hosting AIProvider for icon display.
-    ///
-    /// Aggregator providers (Copilot, Antigravity, Kiro) host models from other providers,
-    /// so their model IDs carry the underlying provider's prefix (e.g., Copilot's
-    /// `claude-3.5-sonnet`). The `provider` field from the proxy API (`owned_by`) is the
-    /// most reliable source and is checked first. Model ID prefix matching serves as a
-    /// fallback for models with unknown or missing provider metadata.
+    /// Maps a model to its UI provider/icon semantics.
     private func providerFromModel(_ model: AvailableModel) -> AIProvider {
-        let providerName = model.provider.lowercased()
-        let modelId = model.id.lowercased()
-
-        // FIRST: Try exact match on provider field (most reliable — from proxy API owned_by)
-        // e.g., "github-copilot" -> .copilot, "antigravity" -> .antigravity
-        for provider in AIProvider.allCases {
-            if provider.rawValue.lowercased() == providerName {
-                return provider
-            }
-        }
-
-        // SECOND: Try to match by model ID prefix (fallback for unknown provider strings)
-        // e.g., "kiro-claude-xxx" -> kiro, "gemini-claude-xxx" -> gemini
-        for provider in AIProvider.allCases {
-            let providerKey = provider.rawValue.lowercased()
-            if modelId.hasPrefix(providerKey + "-") || modelId.hasPrefix(providerKey + "_") {
-                return provider
-            }
-        }
-
-        // THIRD: Try to infer from model ID content (for models without prefix)
-        if modelId.contains("kiro") {
-            return .kiro
-        } else if modelId.contains("gemini") {
-            return .gemini
-        } else if modelId.contains("copilot") {
-            return .copilot
-        } else if modelId.contains("codex") {
-            return .codex
-        }
-
-        // Default to claude for generic claude models
-        return .claude
+        model.providerPresentation.iconProvider
     }
 
     private var isValidEntry: Bool {
@@ -229,11 +191,12 @@ struct AddFallbackEntrySheet: View {
                             Text("fallback.selectModelPlaceholder".localized())
                                 .tag("")
 
-                            let providers = Set(filteredModels.map { $0.provider }).sorted()
+                            let groupedModels = Dictionary(grouping: filteredModels) { $0.providerPresentation.displayLabel }
+                            let providerLabels = groupedModels.keys.sorted()
 
-                            ForEach(providers, id: \.self) { provider in
-                                Section(header: Text(provider.capitalized)) {
-                                    ForEach(filteredModels.filter { $0.provider == provider }) { model in
+                            ForEach(providerLabels, id: \.self) { providerLabel in
+                                Section(header: Text(providerLabel)) {
+                                    ForEach((groupedModels[providerLabel] ?? []).sorted { $0.displayName < $1.displayName }) { model in
                                         Text(model.displayName)
                                             .tag(model.id)
                                     }

@@ -1356,10 +1356,11 @@ actor AgentConfigurationService {
         let availableCopilotModelIds = await copilotFetcher.fetchUserAvailableModelIds()
 
         return decoded.data.compactMap { item in
-            let provider = item.owned_by ?? "openai"
+            let rawProvider = (item.owned_by ?? "openai").trimmingCharacters(in: .whitespacesAndNewlines)
+            let provider = rawProvider.isEmpty ? "openai" : rawProvider
 
             // Filter GitHub Copilot models - only include those actually available to the user
-            if provider == "github-copilot" {
+            if provider.lowercased() == "github-copilot" {
                 // If we have Copilot accounts, filter by available models
                 if !availableCopilotModelIds.isEmpty {
                     guard availableCopilotModelIds.contains(item.id) else {

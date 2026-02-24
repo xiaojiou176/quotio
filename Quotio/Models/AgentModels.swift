@@ -222,10 +222,57 @@ nonisolated struct AvailableModel: Identifiable, Codable, Hashable, Sendable {
     let provider: String
     let isDefault: Bool
 
+    nonisolated struct ProviderPresentation: Hashable, Sendable {
+        let displayLabel: String
+        let iconProvider: AIProvider
+    }
+
     var displayName: String {
         name.split(separator: "-")
             .map { $0.capitalized }
             .joined(separator: " ")
+    }
+
+    var providerPresentation: ProviderPresentation {
+        Self.providerPresentation(rawProvider: provider, modelId: id)
+    }
+
+    static func providerPresentation(rawProvider: String, modelId: String) -> ProviderPresentation {
+        let providerKey = rawProvider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let modelKey = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if providerKey == "vertex-lite" || modelKey.hasPrefix("vertex-sonnet-") {
+            return ProviderPresentation(displayLabel: "Vertex Claude", iconProvider: .vertex)
+        }
+
+        if let exactProvider = AIProvider.allCases.first(where: { $0.rawValue.lowercased() == providerKey }) {
+            return ProviderPresentation(displayLabel: exactProvider.displayName, iconProvider: exactProvider)
+        }
+
+        if modelKey.contains("vertex") {
+            return ProviderPresentation(displayLabel: "Vertex AI", iconProvider: .vertex)
+        }
+        if modelKey.contains("kiro") {
+            return ProviderPresentation(displayLabel: AIProvider.kiro.displayName, iconProvider: .kiro)
+        }
+        if modelKey.contains("gemini") {
+            return ProviderPresentation(displayLabel: AIProvider.gemini.displayName, iconProvider: .gemini)
+        }
+        if modelKey.contains("copilot") {
+            return ProviderPresentation(displayLabel: AIProvider.copilot.displayName, iconProvider: .copilot)
+        }
+        if modelKey.contains("codex") || modelKey.hasPrefix("gpt-") {
+            return ProviderPresentation(displayLabel: AIProvider.codex.displayName, iconProvider: .codex)
+        }
+        if modelKey.contains("claude") {
+            return ProviderPresentation(displayLabel: "Claude", iconProvider: .claude)
+        }
+
+        let fallbackLabel = providerKey.replacingOccurrences(of: "-", with: " ").capitalized
+        return ProviderPresentation(
+            displayLabel: fallbackLabel.isEmpty ? "Unknown" : fallbackLabel,
+            iconProvider: .claude
+        )
     }
 
     static let defaultModels: [ModelSlot: AvailableModel] = [
