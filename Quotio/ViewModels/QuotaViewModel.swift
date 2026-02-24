@@ -1212,10 +1212,12 @@ final class QuotaViewModel {
                     await refreshAllQuotas()
                 }
             }
+        } catch is CancellationError {
+            // Task was cancelled (e.g. stopProxy / app teardown) — not a user-visible error.
+            // Explicitly catching CancellationError avoids a race between Task.isCancelled
+            // being observed before the flag is set, which could surface a spurious error message.
         } catch {
-            if !Task.isCancelled {
-                errorMessage = error.localizedDescription
-            }
+            errorMessage = error.localizedDescription
         }
     }
     

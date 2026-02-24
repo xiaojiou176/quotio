@@ -178,6 +178,7 @@ Manual testing:
 ## Documentation Governance (Required)
 
 - Policy: `docs/documentation-policy.md`
+- Docs index: `docs/README.md`
 - Every code change must include matching documentation updates
 - Gate: `./scripts/doc-ci-gate.sh`
 

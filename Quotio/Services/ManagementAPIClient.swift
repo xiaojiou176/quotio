@@ -154,6 +154,10 @@ actor ManagementAPIClient {
     }
     
     private func makeRequest(_ endpoint: String, method: String = "GET", body: Data? = nil, retryCount: Int = 0) async throws -> Data {
+        // Swift 6 + macOS 15: calling session.data(for:) on an already-cancelled Task triggers abort().
+        // Guard here prevents initiating URLSession requests into a cancelled execution context.
+        try Task.checkCancellation()
+
         let requestId = String(UUID().uuidString.prefix(6))
         let activeCount = Self.incrementActiveRequests()
         let startTime = Date()
@@ -204,8 +208,10 @@ actor ManagementAPIClient {
                 let backoffStr = String(format: "%.1f", backoffSeconds)
                 Self.log("[\(clientId)][\(requestId)] RETRYING after \(backoffStr)s (attempt \(retryCount + 1)/\(timeoutConfig.maxRetries))...")
                 
-                // Exponential backoff delay
-                try? await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
+                // Propagate CancellationError: do NOT use try? here.
+                // Swallowing cancellation and then calling session.data(for:) on a cancelled Task
+                // causes abort() under Swift 6 / macOS 15 strict concurrency.
+                try await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
                 return try await makeRequest(endpoint, method: method, body: body, retryCount: retryCount + 1)
             }
             throw APIError.connectionError(error.localizedDescription)
@@ -566,6 +572,32 @@ actor ManagementAPIClient {
         return response.apiKeys
     }
 
+    /// Fetch OpenAI-compatible routing entries from management config.
+    func fetchOpenAICompatibility() async throws -> [OpenAICompatibilityEntry] {
+        let data = try await makeRequest("/openai-compatibility")
+        let response = try JSONDecoder().decode(OpenAICompatibilityResponse.self, from: data)
+        return response.entries
+    }
+
+    /// Replace OpenAI-compatible routing entries.
+    func replaceOpenAICompatibility(_ entries: [OpenAICompatibilityEntry]) async throws {
+        let body = try JSONEncoder().encode(entries)
+        _ = try await makeRequest("/openai-compatibility", method: "PUT", body: body)
+    }
+
+    /// Fetch Gemini API key entries from management config.
+    func fetchGeminiAPIKeys() async throws -> [GeminiAPIKeyEntry] {
+        let data = try await makeRequest("/gemini-api-key")
+        let response = try JSONDecoder().decode(GeminiAPIKeyResponse.self, from: data)
+        return response.entries
+    }
+
+    /// Replace Gemini API key entries.
+    func replaceGeminiAPIKeys(_ entries: [GeminiAPIKeyEntry]) async throws {
+        let body = try JSONEncoder().encode(entries)
+        _ = try await makeRequest("/gemini-api-key", method: "PUT", body: body)
+    }
+
     /// Fetch account-level egress mapping snapshot from management API.
     func fetchEgressMapping() async throws -> EgressMappingResponse {
         let data = try await makeRequest("/egress-mapping")
@@ -804,6 +836,60 @@ nonisolated struct EgressMappingAccount: Codable, Sendable {
         driftAlerted = try container.decodeIfPresent(Bool.self, forKey: .driftAlerted)
         consistencyStatus = try container.decodeIfPresent(String.self, forKey: .consistencyStatus)
         consistencyIssues = try container.decodeIfPresent([String].self, forKey: .consistencyIssues) ?? []
+    }
+}
+
+nonisolated struct OpenAICompatibilityResponse: Codable, Sendable {
+    let entries: [OpenAICompatibilityEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case entries = "openai-compatibility"
+    }
+}
+
+nonisolated struct OpenAICompatibilityEntry: Codable, Sendable {
+    let name: String?
+    let prefix: String?
+    let baseURL: String?
+    let apiKeyEntries: [OpenAICompatibilityAPIKeyEntry]?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case prefix
+        case baseURL = "base-url"
+        case apiKeyEntries = "api-key-entries"
+    }
+}
+
+nonisolated struct OpenAICompatibilityAPIKeyEntry: Codable, Sendable {
+    let apiKey: String?
+    let proxyURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case apiKey = "api-key"
+        case proxyURL = "proxy-url"
+    }
+}
+
+nonisolated struct GeminiAPIKeyResponse: Codable, Sendable {
+    let entries: [GeminiAPIKeyEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case entries = "gemini-api-key"
+    }
+}
+
+nonisolated struct GeminiAPIKeyEntry: Codable, Sendable {
+    let apiKey: String?
+    let prefix: String?
+    let baseURL: String?
+    let proxyURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case apiKey = "api-key"
+        case prefix
+        case baseURL = "base-url"
+        case proxyURL = "proxy-url"
     }
 }
 
