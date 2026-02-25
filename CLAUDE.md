@@ -2,7 +2,31 @@
 
 This project uses **agentlens** for AI-optimized documentation.
 
-## Reading Protocol
+## 0) Project Purpose / Stack / Navigation / Verification
+
+- Project purpose: macOS menu bar client for managing CLIProxyAPI local proxy, provider OAuth, and quota workflows.
+- Stack: Swift 6, SwiftUI, macOS 15+, Xcode 16+, Sparkle.
+- Directory navigation:
+  - App entry: `Quotio/QuotioApp.swift`
+  - Core models: `Quotio/Models/`
+  - Services: `Quotio/Services/`
+  - View state: `Quotio/ViewModels/`
+  - UI: `Quotio/Views/`
+  - Build/release scripts: `scripts/`
+- Common verification commands:
+  - `./scripts/test.sh`
+  - `xcodebuild -project Quotio.xcodeproj -scheme Quotio -configuration Debug build`
+  - `./scripts/doc-ci-gate.sh`
+
+## 1) Execution Contract (Fixed Loop)
+
+Follow this order for every task:
+1. `Observe`: identify entry points, affected state, and dependency impact.
+2. `Change`: keep edits minimal and scoped to the request.
+3. `Verify`: run smallest relevant checks first, then run docs/build gates when needed.
+4. `Report`: include changed files, behavior delta, evidence, and risk notes.
+
+## 2) Reading Protocol
 
 Follow this order to understand the codebase efficiently:
 
@@ -11,7 +35,7 @@ Follow this order to understand the codebase efficiently:
 3. **Module details**: `.agentlens/modules/{module}/MODULE.md` - File lists and entry points
 4. **Before editing**: Check `.agentlens/modules/{module}/memory.md` for warnings/TODOs
 
-## Documentation Structure
+## 3) Documentation Structure
 
 ```
 .agentlens/
@@ -26,13 +50,13 @@ Follow this order to understand the codebase efficiently:
 └── files/                # Deep docs for complex files
 ```
 
-## During Development
+## 4) During Development
 
 - Use `.agentlens/modules/{module}/outline.md` to find symbols in large files
 - Check `.agentlens/modules/{module}/imports.md` for dependencies
 - For complex files, see `.agentlens/files/{file-slug}.md`
 
-## Commands
+## 5) Commands
 
 | Task | Command |
 |------|---------|
@@ -41,12 +65,12 @@ Follow this order to understand the codebase efficiently:
 | Check if stale | `agentlens --check` |
 | Force full regen | `agentlens --force` |
 
-## Documentation Governance
+## 6) Documentation Governance
 
 - Policy: `docs/documentation-policy.md`
 - Gate: `./scripts/doc-ci-gate.sh`
 
-## Key Patterns
+## 7) Key Patterns
 
 - **Module boundaries**: `mod.rs` (Rust), `index.ts` (TS), `__init__.py` (Python)
 - **Large files**: >500 lines, have symbol outlines

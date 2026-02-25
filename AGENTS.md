@@ -48,6 +48,19 @@ docs/                         # Architecture docs
 | `StatusBarManager` | Class | Services/ | Menu bar icon and menu |
 | `ProxyBridge` | Class | Services/ | TCP bridge layer for connection management |
 
+## Execution Contract (Required)
+
+For every task, follow this fixed loop:
+1. `Observe`: locate entry points, affected state, and dependency chain.
+2. `Change`: apply minimal, scoped edits only.
+3. `Verify`: run the smallest relevant checks first, then add build/doc gates if needed.
+4. `Report`: provide changed files, behavior delta, verification evidence, and risk notes.
+
+Verification command entry:
+- `./scripts/test.sh`
+- `xcodebuild -project Quotio.xcodeproj -scheme Quotio -configuration Debug build`
+- `./scripts/doc-ci-gate.sh`
+
 ## Build Commands
 
 ```bash

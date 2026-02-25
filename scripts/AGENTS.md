@@ -12,7 +12,7 @@
 | `./scripts/release.sh` | Full release pipeline |
 | `./scripts/quick-release.sh` | Interactive release helper |
 | `./scripts/bump-version.sh` | Version management |
-| `./scripts/xcode-test-stable.sh` | Stable xcodebuild test runner (timeout + log persistence) |
+| `./scripts/xcode-test-stable.sh` | Stable xcodebuild test runner (timeout + heartbeat + log persistence) |
 
 ## Build Pipeline
 

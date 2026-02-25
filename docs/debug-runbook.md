@@ -19,6 +19,7 @@ xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS
 稳定测试建议优先使用 `./scripts/xcode-test-stable.sh`：
 - 预检失败会立刻返回 `2`
 - 运行超时会强制终止并返回 `124`
+- 长测每隔 `HEARTBEAT_SECONDS`（默认 `15`）输出心跳，避免无日志死等
 - 失败返回 `1`，通过返回 `0`
 - 日志与结果摘要自动落盘到 `.runtime-cache/test_output/quotio-xcode-test-stable/<timestamp>/`
 

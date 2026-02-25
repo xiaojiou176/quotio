@@ -122,6 +122,7 @@ xcodebuild -project Quotio.xcodeproj -scheme Quotio -destination "platform=macOS
 Stable runner notes:
 - Adds preflight checks (tooling/project/scheme visibility)
 - Enforces timeout (`TIMEOUT_SECONDS`, default `1200`)
+- Emits heartbeat logs for long runs (`HEARTBEAT_SECONDS`, default `15`)
 - Persists logs and result summary to `.runtime-cache/test_output/quotio-xcode-test-stable/<timestamp>/`
 - Returns explicit exit code: `0=pass`, `1=fail`, `124=timeout`, `2=preflight-fail`
 

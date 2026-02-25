@@ -16,6 +16,7 @@ DESTINATION="${XCODE_DESTINATION:-platform=macOS}"
 CONFIGURATION="${XCODE_CONFIGURATION:-Debug}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$REPO_ROOT/.runtime-cache/build/quotio-xcode-test-stable-deriveddata}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-1200}"
+HEARTBEAT_SECONDS="${HEARTBEAT_SECONDS:-15}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 RUN_DIR="$REPO_ROOT/.runtime-cache/test_output/quotio-xcode-test-stable/$STAMP"
@@ -61,6 +62,7 @@ preflight() {
   echo "configuration=$CONFIGURATION" >> "$PREFLIGHT_LOG"
   echo "derived_data=$DERIVED_DATA_PATH" >> "$PREFLIGHT_LOG"
   echo "timeout_seconds=$TIMEOUT_SECONDS" >> "$PREFLIGHT_LOG"
+  echo "heartbeat_seconds=$HEARTBEAT_SECONDS" >> "$PREFLIGHT_LOG"
 
   command -v xcodebuild >/dev/null 2>&1 || {
     echo "xcodebuild not found" | tee -a "$PREFLIGHT_LOG"
@@ -79,6 +81,10 @@ preflight() {
 
   if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$TIMEOUT_SECONDS" -le 0 ]]; then
     echo "invalid TIMEOUT_SECONDS: $TIMEOUT_SECONDS" | tee -a "$PREFLIGHT_LOG"
+    return "$EXIT_PREFLIGHT"
+  fi
+  if ! [[ "$HEARTBEAT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$HEARTBEAT_SECONDS" -le 0 ]]; then
+    echo "invalid HEARTBEAT_SECONDS: $HEARTBEAT_SECONDS" | tee -a "$PREFLIGHT_LOG"
     return "$EXIT_PREFLIGHT"
   fi
 
@@ -101,7 +107,7 @@ write_summary() {
 }
 
 run_test_with_timeout() {
-  python3 - "$TIMEOUT_SECONDS" "$LOG_FILE" "$PROJECT_PATH" "$SCHEME" "$DESTINATION" "$CONFIGURATION" "$DERIVED_DATA_PATH" <<'PY'
+  python3 - "$TIMEOUT_SECONDS" "$HEARTBEAT_SECONDS" "$LOG_FILE" "$PROJECT_PATH" "$SCHEME" "$DESTINATION" "$CONFIGURATION" "$DERIVED_DATA_PATH" <<'PY'
 import os
 import select
 import signal
@@ -110,12 +116,13 @@ import sys
 import time
 
 timeout_seconds = int(sys.argv[1])
-log_file = sys.argv[2]
-project = sys.argv[3]
-scheme = sys.argv[4]
-destination = sys.argv[5]
-configuration = sys.argv[6]
-derived_data = sys.argv[7]
+heartbeat_seconds = int(sys.argv[2])
+log_file = sys.argv[3]
+project = sys.argv[4]
+scheme = sys.argv[5]
+destination = sys.argv[6]
+configuration = sys.argv[7]
+derived_data = sys.argv[8]
 
 cmd = [
     "xcodebuild",
@@ -128,6 +135,8 @@ cmd = [
 ]
 
 deadline = time.time() + timeout_seconds
+started_at = time.time()
+next_heartbeat_at = started_at + heartbeat_seconds
 
 def emit(handle, text):
     handle.write(text)
@@ -139,6 +148,7 @@ with open(log_file, "a", encoding="utf-8", errors="replace") as log:
     emit(log, "=== xcode-test-stable: command ===\n")
     emit(log, " ".join(cmd) + "\n")
     emit(log, f"timeout_seconds={timeout_seconds}\n")
+    emit(log, f"heartbeat_seconds={heartbeat_seconds}\n")
     emit(log, "=== xcode-test-stable: output ===\n")
 
     proc = subprocess.Popen(
@@ -164,6 +174,13 @@ with open(log_file, "a", encoding="utf-8", errors="replace") as log:
             chunk = os.read(fd, 4096)
             if chunk:
                 emit(log, chunk.decode("utf-8", errors="replace"))
+
+        now = time.time()
+        if now >= next_heartbeat_at:
+            elapsed = int(now - started_at)
+            remain = max(0, int(deadline - now))
+            emit(log, f"[heartbeat] xcode-test-stable running... elapsed={elapsed}s remaining={remain}s\n")
+            next_heartbeat_at = now + heartbeat_seconds
 
         rc = proc.poll()
         if rc is not None:
