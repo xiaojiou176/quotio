@@ -29,6 +29,30 @@ log() {
   printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG_FILE"
 }
 
+RESET_SOURCE_PACKAGES=0
+
+ensure_sparkle_artifact_integrity() {
+  local source_packages_root="$DERIVED_DATA_PATH/SourcePackages"
+  local sparkle_xcframework="$source_packages_root/artifacts/sparkle/Sparkle/Sparkle.xcframework"
+  local sparkle_info_plist="$sparkle_xcframework/Info.plist"
+  local workspace_state="$source_packages_root/workspace-state.json"
+
+  if [[ -d "$sparkle_xcframework" ]] && [[ ! -f "$sparkle_info_plist" ]]; then
+    RESET_SOURCE_PACKAGES=1
+    echo "sparkle_integrity=missing_info_plist" >> "$PREFLIGHT_LOG"
+  fi
+
+  if [[ ! -d "$sparkle_xcframework" ]] && [[ -f "$workspace_state" ]] && grep -q '"identity" : "sparkle"' "$workspace_state"; then
+    RESET_SOURCE_PACKAGES=1
+    echo "sparkle_integrity=missing_xcframework" >> "$PREFLIGHT_LOG"
+  fi
+
+  if [[ "$RESET_SOURCE_PACKAGES" -eq 1 ]]; then
+    rm -rf "$source_packages_root"
+    echo "source_packages_reset=1" >> "$PREFLIGHT_LOG"
+  fi
+}
+
 preflight() {
   : > "$PREFLIGHT_LOG"
   echo "project=$PROJECT_PATH" >> "$PREFLIGHT_LOG"
@@ -60,6 +84,7 @@ preflight() {
 
   xcodebuild -version >> "$PREFLIGHT_LOG" 2>&1
   xcodebuild -list -project "$PROJECT_PATH" >> "$PREFLIGHT_LOG" 2>&1
+  ensure_sparkle_artifact_integrity
 }
 
 write_summary() {
@@ -166,6 +191,10 @@ with open(log_file, "a", encoding="utf-8", errors="replace") as log:
 PY
 }
 
+should_retry_runner_hang() {
+  grep -q "The test runner hung before establishing connection" "$LOG_FILE"
+}
+
 main() {
   : > "$LOG_FILE"
   log "run_dir=$RUN_DIR"
@@ -184,6 +213,12 @@ main() {
   set +e
   run_test_with_timeout
   local rc=$?
+  if [[ "$rc" -ne 0 ]] && should_retry_runner_hang; then
+    log "detected test-runner hang, retrying once after cleaning test logs"
+    rm -rf "$DERIVED_DATA_PATH/Logs/Test"
+    run_test_with_timeout
+    rc=$?
+  fi
   set -e
 
   case "$rc" in
