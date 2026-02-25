@@ -91,6 +91,19 @@ struct FallbackContext: Sendable {
     )
 }
 
+private final class ConnectionReleaseGate: @unchecked Sendable {
+    nonisolated private let lock = NSLock()
+    nonisolated(unsafe) private var released = false
+
+    nonisolated func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !released else { return false }
+        released = true
+        return true
+    }
+}
+
 /// A lightweight TCP proxy that forwards requests to CLIProxyAPI while
 /// ensuring fresh connections by forcing "Connection: close" on all requests.
 @MainActor
@@ -128,6 +141,10 @@ final class ProxyBridge {
     
     /// Connection timeout in seconds (for target connection setup)
     private let connectionTimeoutSeconds: UInt64 = 10
+
+    /// Sliding response window budget to avoid unbounded memory growth on long streams.
+    private let responseWindowHeadLimit = 4096
+    private let responseWindowTailLimit = 32768
     
     /// Callback for request metadata extraction (for RequestTracker)
     var onRequestCompleted: ((RequestMetadata) -> Void)?
@@ -268,17 +285,21 @@ final class ProxyBridge {
 
         let connectionId = totalRequests
         let startTime = Date()
+        let releaseGate = ConnectionReleaseGate()
 
         connection.stateUpdateHandler = { [weak self] state in
             guard let weakSelf = self else { return }
-            if case .cancelled = state {
-                Task { @MainActor in
-                    weakSelf.activeConnections -= 1
-                }
-            } else if case .failed = state {
-                Task { @MainActor in
-                    weakSelf.activeConnections -= 1
-                }
+            let isTerminalState: Bool
+            switch state {
+            case .cancelled, .failed:
+                isTerminalState = true
+            default:
+                isTerminalState = false
+            }
+            guard isTerminalState, releaseGate.claim() else { return }
+
+            Task { @MainActor in
+                weakSelf.activeConnections = Self.decrementedActiveConnections(weakSelf.activeConnections)
             }
         }
         
@@ -677,6 +698,7 @@ final class ProxyBridge {
         let sourceResult = classifyRequestSource(headers: headers, path: path, body: body)
         let accountHint = extractAccountHint(headers: headers)
         let payloadSnippet = isPayloadEvidenceCaptureEnabled() ? captureAndTrimPayload(body) : nil
+        let sanitizedPath = PrivacyRedactor.redactEndpointQuery(path)
 
         return (
             requestId: requestId,
@@ -687,7 +709,7 @@ final class ProxyBridge {
             accountHint: accountHint,
             requestPayloadSnippet: payloadSnippet,
             method: method,
-            path: path
+            path: sanitizedPath
         )
     }
 
@@ -761,16 +783,17 @@ final class ProxyBridge {
 
     private nonisolated func captureAndTrimPayload(_ body: String, limit: Int = 4096) -> String? {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        if body.count > limit {
-            return String(body.prefix(limit)) + "\n...<truncated>"
+        let sanitized = PrivacyRedactor.redactStructuredText(body)
+        if sanitized.count > limit {
+            return String(sanitized.prefix(limit)) + "\n...<truncated>"
         }
-        return body
+        return sanitized
     }
 
     private nonisolated func isPayloadEvidenceCaptureEnabled() -> Bool {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "ui.captureRequestPayloadEvidence") == nil {
-            return true
+            return false
         }
         return defaults.bool(forKey: "ui.captureRequestPayloadEvidence")
     }
@@ -885,7 +908,8 @@ final class ProxyBridge {
                             requestSize: requestSize,
                             metadata: metadata,
                             requestId: requestId,
-                            responseData: Data(),
+                            responseDataWindow: Data(),
+                            responseBytesReceived: 0,
                             fallbackContext: capturedFallbackContext,
                             headers: capturedHeaders,
                             method: capturedMethod,
@@ -930,7 +954,8 @@ final class ProxyBridge {
             path: String
         ),
         requestId: String,
-        responseData: Data,
+        responseDataWindow: Data,
+        responseBytesReceived: Int,
         fallbackContext: FallbackContext,
         headers: [(String, String)],
         method: String,
@@ -949,23 +974,28 @@ final class ProxyBridge {
             }
 
             // Use let to avoid captured var warning - Data is already accumulated via parameter
-            let accumulatedResponse: Data
+            let incomingSize = data?.count ?? 0
+            let totalBytesReceived = responseBytesReceived + incomingSize
+            let accumulatedResponseWindow: Data
             if let data = data, !data.isEmpty {
-                var newAccumulated = responseData
-                newAccumulated.append(data)
-                accumulatedResponse = newAccumulated
+                accumulatedResponseWindow = Self.updatedResponseWindow(
+                    existing: responseDataWindow,
+                    incoming: data,
+                    headLimit: self.responseWindowHeadLimit,
+                    tailLimit: self.responseWindowTailLimit
+                )
             } else {
-                accumulatedResponse = responseData
+                accumulatedResponseWindow = responseDataWindow
             }
 
             // Check for quota exceeded BEFORE forwarding to client (within first 4KB to catch streaming errors)
             let quotaCheckThreshold = 4096
-            if accumulatedResponse.count <= quotaCheckThreshold && !accumulatedResponse.isEmpty && fallbackContext.hasFallback {
-                let fallbackReason = self.fallbackReason(responseData: accumulatedResponse)
+            if accumulatedResponseWindow.count <= quotaCheckThreshold && !accumulatedResponseWindow.isEmpty && fallbackContext.hasFallback {
+                let fallbackReason = self.fallbackReason(responseData: accumulatedResponseWindow)
 
                 // Check for thinking signature errors - retry same provider with sanitized body
                 if fallbackReason != nil {
-                    let isSignatureError = FallbackFormatConverter.isThinkingSignatureError(responseData: accumulatedResponse)
+                    let isSignatureError = FallbackFormatConverter.isThinkingSignatureError(responseData: accumulatedResponseWindow)
 
                     if isSignatureError && !fallbackContext.triedSanitization,
                        let currentEntry = fallbackContext.currentEntry {
@@ -1055,8 +1085,8 @@ final class ProxyBridge {
                             connectionId: connectionId,
                             startTime: startTime,
                             requestSize: requestSize,
-                            responseSize: accumulatedResponse.count,
-                            responseData: accumulatedResponse,
+                            responseSize: totalBytesReceived,
+                            responseData: accumulatedResponseWindow,
                             metadata: metadata,
                             requestId: requestId,
                             fallbackContext: fallbackContext
@@ -1077,7 +1107,8 @@ final class ProxyBridge {
                                 requestSize: requestSize,
                                 metadata: metadata,
                                 requestId: requestId,
-                                responseData: accumulatedResponse,
+                                responseDataWindow: accumulatedResponseWindow,
+                                responseBytesReceived: totalBytesReceived,
                                 fallbackContext: fallbackContext,
                                 headers: headers,
                                 method: method,
@@ -1095,8 +1126,8 @@ final class ProxyBridge {
                     connectionId: connectionId,
                     startTime: startTime,
                     requestSize: requestSize,
-                    responseSize: accumulatedResponse.count,
-                    responseData: accumulatedResponse,
+                    responseSize: totalBytesReceived,
+                    responseData: accumulatedResponseWindow,
                     metadata: metadata,
                     requestId: requestId,
                     fallbackContext: fallbackContext
@@ -1214,10 +1245,41 @@ final class ProxyBridge {
                 responseSize: responseSize,
                 fallbackAttempts: attempts,
                 fallbackStartedFromCache: fallbackContext.wasLoadedFromCache,
-                responseSnippet: responseSnippet
+                responseSnippet: responseSnippet.map { PrivacyRedactor.redactStructuredText($0) }
             )
             self?.onRequestCompleted?(requestMetadata)
         }
+    }
+
+    nonisolated static func decrementedActiveConnections(_ current: Int) -> Int {
+        max(0, current - 1)
+    }
+
+    nonisolated static func updatedResponseWindow(
+        existing: Data,
+        incoming: Data,
+        headLimit: Int = 4096,
+        tailLimit: Int = 32768
+    ) -> Data {
+        guard headLimit > 0, tailLimit >= 0 else {
+            var merged = existing
+            merged.append(incoming)
+            return merged
+        }
+
+        var merged = existing
+        merged.append(incoming)
+
+        let maxSize = headLimit + tailLimit
+        guard merged.count > maxSize else { return merged }
+
+        let head = merged.prefix(headLimit)
+        let tail = merged.suffix(tailLimit)
+
+        var bounded = Data()
+        bounded.append(head)
+        bounded.append(tail)
+        return bounded
     }
     
     // MARK: - Error Response

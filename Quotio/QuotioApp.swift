@@ -320,7 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let senderPIDAttribute = fourCharCode("spid")
     private static let addressAttribute = fourCharCode("addr")
     private static let originalAddressAttribute = fourCharCode("from")
-    private static let terminationTimestampFormatter: DateFormatter = {
+    private nonisolated static let terminationTimestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -499,6 +499,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func appendTerminationAudit(_ message: String) {
+        Self.appendTerminationAuditLine(message)
+    }
+
+    private nonisolated static func appendTerminationAuditLine(_ message: String) {
         let supportDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
         let logURL = supportDirectory
@@ -621,24 +625,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep CLIProxyAPI alive when Quotio exits.
         // Proxy lifecycle is controlled explicitly by user actions in-app.
 
-        // Use semaphore to ensure tunnel cleanup completes before app terminates
-        // with a timeout to prevent hanging termination
-        let semaphore = DispatchSemaphore(value: 0)
-        let cleanupTimeout: DispatchTime = .now() + .milliseconds(1500)
-        
-        Task { @MainActor in
-            await TunnelManager.shared.stopTunnel()
-            semaphore.signal()
-        }
-        
-        let result = semaphore.wait(timeout: cleanupTimeout)
-        if result == .timedOut {
-            // Fallback: force kill orphan processes if stopTunnel timed out
-            TunnelManager.cleanupOrphans()
-            Log.warning("[AppDelegate] Tunnel cleanup timed out, forced orphan cleanup")
-            appendTerminationAudit("will_terminate_cleanup timeout=true")
-        } else {
-            appendTerminationAudit("will_terminate_cleanup timeout=false")
+        Task.detached(priority: .utility) {
+            let didStopGracefully = await withTaskGroup(of: Bool.self) { group in
+                group.addTask {
+                    await TunnelManager.shared.stopTunnel()
+                    return true
+                }
+
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    return false
+                }
+
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+
+            if didStopGracefully {
+                Self.appendTerminationAuditLine("will_terminate_cleanup timeout=false")
+            } else {
+                TunnelManager.cleanupOrphans()
+                Log.warning("[AppDelegate] Tunnel cleanup timed out, forced orphan cleanup")
+                Self.appendTerminationAuditLine("will_terminate_cleanup timeout=true")
+            }
         }
     }
 

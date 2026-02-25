@@ -540,6 +540,253 @@ final class QuotioTests: XCTestCase {
         XCTAssertNil(AtomFeedHeaderSanitizer.sanitizeETag(malformed))
     }
 
+    func testProxyBridgeDecrementedActiveConnectionsNeverGoesNegative() {
+        XCTAssertEqual(ProxyBridge.decrementedActiveConnections(3), 2)
+        XCTAssertEqual(ProxyBridge.decrementedActiveConnections(1), 0)
+        XCTAssertEqual(ProxyBridge.decrementedActiveConnections(0), 0)
+    }
+
+    func testProxyBridgeUpdatedResponseWindowKeepsHeadAndTail() {
+        let existing = Data((0..<10).map(UInt8.init))
+        let incoming = Data((10..<30).map(UInt8.init))
+
+        let window = ProxyBridge.updatedResponseWindow(
+            existing: existing,
+            incoming: incoming,
+            headLimit: 4,
+            tailLimit: 6
+        )
+
+        XCTAssertEqual(Array(window), [0, 1, 2, 3, 24, 25, 26, 27, 28, 29])
+        XCTAssertEqual(window.count, 10)
+    }
+
+    func testProxyBridgeUpdatedResponseWindowLeavesSmallPayloadUntouched() {
+        let existing = Data([1, 2, 3])
+        let incoming = Data([4, 5])
+
+        let window = ProxyBridge.updatedResponseWindow(
+            existing: existing,
+            incoming: incoming,
+            headLimit: 8,
+            tailLimit: 8
+        )
+
+        XCTAssertEqual(Array(window), [1, 2, 3, 4, 5])
+    }
+
+    func testUIExperienceDefaultPayloadEvidenceCaptureIsDisabled() {
+        XCTAssertFalse(UIExperienceSettingsManager.defaultCaptureRequestPayloadEvidence)
+    }
+
+    func testPrivacyRedactorRedactsEndpointQueryValues() {
+        let endpoint = "/v1/chat/completions?api_key=sk-secret&trace_id=abc123"
+        let redacted = PrivacyRedactor.redactEndpointQuery(endpoint)
+
+        XCTAssertTrue(redacted.contains("api_key=%5Bredacted%5D"))
+        XCTAssertTrue(redacted.contains("trace_id=%5Bredacted%5D"))
+        XCTAssertFalse(redacted.contains("sk-secret"))
+        XCTAssertFalse(redacted.contains("abc123"))
+    }
+
+    func testPrivacyRedactorRedactsStructuredPayloadAndNestedURL() {
+        let payload = """
+        {"api_key":"sk-secret-123","endpointURL":"https://example.com/v1?token=abc&mode=test","messages":[{"content":"hello"}]}
+        """
+        let redacted = PrivacyRedactor.redactStructuredText(payload)
+
+        XCTAssertFalse(redacted.contains("sk-secret-123"))
+        XCTAssertFalse(redacted.contains("token=abc"))
+        XCTAssertTrue(redacted.contains("[masked len="))
+        XCTAssertTrue(redacted.contains("token=%5Bredacted%5D"))
+    }
+
+    func testPrivacyRedactorRedactsLooseFormEncodedText() {
+        let payload = "model=gpt-4o&api_key=sk-form-secret&refresh_token=rt-secret"
+        let redacted = PrivacyRedactor.redactStructuredText(payload)
+
+        XCTAssertFalse(redacted.contains("sk-form-secret"))
+        XCTAssertFalse(redacted.contains("rt-secret"))
+        XCTAssertTrue(redacted.contains("api_key=[redacted]"))
+        XCTAssertTrue(redacted.contains("refresh_token=[redacted]"))
+    }
+
+    func testPrivacyRedactorRedactsAuthorizationValueInLooseText() {
+        let payload = "authorization=sk-live-super-secret"
+        let redacted = PrivacyRedactor.redactStructuredText(payload)
+
+        XCTAssertFalse(redacted.contains("sk-live-super-secret"))
+        XCTAssertTrue(redacted.contains("authorization=[redacted]"))
+    }
+
+    func testOpenAIRefreshTokenFormBodyUsesStandardURLEncodingForSpecialCharacters() {
+        let rawRefreshToken = "rt+/=?:& %"
+        guard let bodyData = OpenAIQuotaFetcher.formEncodedRefreshTokenBody(refreshToken: rawRefreshToken),
+              let body = String(data: bodyData, encoding: .utf8) else {
+            XCTFail("Expected encoded form body")
+            return
+        }
+
+        XCTAssertTrue(body.hasPrefix("refresh_token="))
+        XCTAssertFalse(body.contains(rawRefreshToken))
+
+        var components = URLComponents()
+        components.percentEncodedQuery = body
+        let decodedRefreshToken = components.queryItems?.first(where: { $0.name == "refresh_token" })?.value
+        XCTAssertEqual(decodedRefreshToken, rawRefreshToken)
+    }
+
+    @MainActor
+    func testSettingsAuditTrailMasksURLSettingsValues() {
+        let trail = SettingsAuditTrail.shared
+        trail.clear()
+
+        trail.recordChange(
+            key: "proxyURL",
+            oldValue: "https://alice:secret@example.com/v1?token=abc",
+            newValue: "https://alice:secret@example.com/v1?token=next",
+            source: "unit-test"
+        )
+
+        guard let first = trail.recent(limit: 1).first else {
+            XCTFail("Expected one settings audit event")
+            return
+        }
+
+        XCTAssertFalse(first.oldValue.contains("alice"))
+        XCTAssertFalse(first.oldValue.contains("secret"))
+        XCTAssertFalse(first.oldValue.contains("token=abc"))
+        XCTAssertTrue(first.newValue.contains("token=%5Bredacted%5D"))
+    }
+
+    @MainActor
+    func testRequestTrackerExportRedactsStoredEndpointPayloadAndResponse() throws {
+        let tracker = RequestTracker.shared
+        tracker.clearHistory()
+
+        let entry = RequestLog(
+            timestamp: Date(timeIntervalSince1970: 1_768_000_000),
+            requestId: "req-privacy-1",
+            method: "POST",
+            endpoint: "/v1/messages?api_key=sk-secret&debug=true",
+            provider: "anthropic",
+            model: "claude-sonnet-4-5",
+            source: "Codex CLI",
+            sourceRaw: "codex",
+            accountHint: "primary",
+            requestPayloadSnippet: #"{"authorization":"Bearer super-secret","endpointURL":"https://api.example.com/v1?token=abc"}"#,
+            resolvedModel: nil,
+            resolvedProvider: nil,
+            inputTokens: nil,
+            outputTokens: nil,
+            durationMs: 120,
+            statusCode: 429,
+            requestSize: 512,
+            responseSize: 256,
+            errorMessage: #"{"error":"quota exceeded","details":{"refresh_token":"rt-secret","retry_url":"https://api.example.com/retry?ticket=123"}}"#
+        )
+        tracker.addEntry(entry)
+
+        let data = try tracker.exportAuditPackageData()
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let package = try decoder.decode(RequestTracker.RequestAuditPackage.self, from: data)
+
+        guard let exported = package.recentRequests.first else {
+            XCTFail("Expected one exported request")
+            return
+        }
+
+        XCTAssertTrue(exported.endpoint.contains("api_key=%5Bredacted%5D"))
+        XCTAssertFalse(exported.endpoint.contains("sk-secret"))
+        XCTAssertFalse(exported.requestPayloadSnippet?.contains("super-secret") ?? false)
+        XCTAssertFalse(exported.errorMessage?.contains("rt-secret") ?? false)
+        XCTAssertTrue(exported.errorMessage?.contains("ticket=%5Bredacted%5D") ?? false)
+    }
+
+    func testCreateProxiedConfigurationStaticBuildsSocks5ProxyDictionary() {
+        UserDefaults.standard.set("socks5://alice:secret@127.0.0.1:1080", forKey: "proxyURL")
+        defer { UserDefaults.standard.removeObject(forKey: "proxyURL") }
+
+        let config = ProxyConfigurationService.createProxiedConfigurationStatic(timeout: 9)
+        guard let proxy = config.connectionProxyDictionary else {
+            XCTFail("Expected SOCKS5 proxy dictionary to be generated")
+            return
+        }
+
+        XCTAssertEqual(config.timeoutIntervalForRequest, 9)
+        XCTAssertEqual(proxy[kCFStreamPropertySOCKSProxyHost] as? String, "127.0.0.1")
+        XCTAssertEqual(proxy[kCFStreamPropertySOCKSProxyPort] as? Int, 1080)
+        XCTAssertEqual(proxy[kCFStreamPropertySOCKSVersion] as? String, kCFStreamSocketSOCKSVersion5 as String)
+        XCTAssertNil(proxy[kCFStreamPropertySOCKSUser], "Sanitizer should strip embedded credentials")
+        XCTAssertNil(proxy[kCFStreamPropertySOCKSPassword], "Sanitizer should strip embedded credentials")
+    }
+
+    func testCreateProxiedConfigurationStaticRejectsUnsupportedProxyScheme() {
+        UserDefaults.standard.set("ftp://proxy.example.com:21", forKey: "proxyURL")
+        defer { UserDefaults.standard.removeObject(forKey: "proxyURL") }
+
+        let config = ProxyConfigurationService.createProxiedConfigurationStatic(timeout: 11)
+        XCTAssertEqual(config.timeoutIntervalForRequest, 11)
+        XCTAssertNil(config.connectionProxyDictionary)
+    }
+
+    @MainActor
+    func testRequestHistoryStoreTreatsMissingStatusCodeAsFailure() {
+        var store = RequestHistoryStore.empty
+        store.addEntry(
+            RequestLog(
+                timestamp: Date(timeIntervalSince1970: 1_768_000_010),
+                requestId: "req-fail-nil-status",
+                method: "POST",
+                endpoint: "/v1/responses",
+                provider: "openai",
+                model: "gpt-5",
+                durationMs: 90,
+                statusCode: nil,
+                requestSize: 100,
+                responseSize: 0,
+                errorMessage: "timeout"
+            )
+        )
+        store.addEntry(
+            RequestLog(
+                timestamp: Date(timeIntervalSince1970: 1_768_000_020),
+                requestId: "req-success",
+                method: "POST",
+                endpoint: "/v1/responses",
+                provider: "openai",
+                model: "gpt-5",
+                durationMs: 110,
+                statusCode: 201,
+                requestSize: 120,
+                responseSize: 240,
+                errorMessage: nil
+            )
+        )
+
+        let stats = store.calculateStats()
+        XCTAssertEqual(stats.totalRequests, 2)
+        XCTAssertEqual(stats.successfulRequests, 1)
+        XCTAssertEqual(stats.failedRequests, 1)
+        let openAIRequestCount = stats.byProvider["openai"]?.requestCount
+        XCTAssertEqual(openAIRequestCount, 2)
+    }
+
+    @MainActor
+    func testUpstreamProxyURLSanitizesCredentialsAndRejectsInvalidSocks5WithoutPort() {
+        UserDefaults.standard.set("  http://alice:secret@example.com:8080/proxy/  ", forKey: "proxyURL")
+        defer { UserDefaults.standard.removeObject(forKey: "proxyURL") }
+
+        XCTAssertEqual(ProxyConfigurationService.shared.upstreamProxyURL, "http://example.com:8080/proxy")
+
+        UserDefaults.standard.set("socks5://127.0.0.1", forKey: "proxyURL")
+        XCTAssertNil(ProxyConfigurationService.shared.upstreamProxyURL)
+
+        let config = ProxyConfigurationService.createProxiedConfigurationStatic()
+        XCTAssertNil(config.connectionProxyDictionary)
+    }
+
     private func assertHasCommonExecFlags(_ arguments: [String], file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(arguments.prefix(4), ["exec", "--model", "gpt-5.3-codex", "--full-auto"], file: file, line: line)
         XCTAssertTrue(arguments.contains("--skip-git-repo-check"), file: file, line: line)

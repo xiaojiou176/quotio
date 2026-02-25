@@ -105,17 +105,20 @@ final class RequestTracker {
     /// Add a request from ProxyBridge callback
     func addRequest(from metadata: ProxyBridge.RequestMetadata) {
         let attempts = metadata.fallbackAttempts.isEmpty ? nil : metadata.fallbackAttempts
+        let sanitizedEndpoint = PrivacyRedactor.redactEndpointQuery(metadata.path)
+        let sanitizedPayload = metadata.requestPayloadSnippet.map { PrivacyRedactor.redactStructuredText($0) }
+        let sanitizedResponseSnippet = metadata.responseSnippet.map { PrivacyRedactor.redactStructuredText($0) }
         let entry = RequestLog(
             timestamp: metadata.timestamp,
             requestId: metadata.requestId,
             method: metadata.method,
-            endpoint: metadata.path,
+            endpoint: sanitizedEndpoint,
             provider: metadata.provider,
             model: metadata.model,
             source: metadata.source,
             sourceRaw: metadata.sourceRaw,
             accountHint: metadata.accountHint,
-            requestPayloadSnippet: metadata.requestPayloadSnippet,
+            requestPayloadSnippet: sanitizedPayload,
             resolvedModel: metadata.resolvedModel,
             resolvedProvider: metadata.resolvedProvider,
             inputTokens: nil,
@@ -124,7 +127,7 @@ final class RequestTracker {
             statusCode: metadata.statusCode,
             requestSize: metadata.requestSize,
             responseSize: metadata.responseSize,
-            errorMessage: metadata.responseSnippet,
+            errorMessage: sanitizedResponseSnippet,
             fallbackAttempts: attempts,
             fallbackStartedFromCache: metadata.fallbackStartedFromCache
         )
@@ -231,7 +234,7 @@ final class RequestTracker {
     }
 
     func exportAuditPackageData(authFiles: [AuthFile] = []) throws -> Data {
-        let settingsSnapshot: [String: String] = [
+        let rawSettingsSnapshot: [String: String] = [
             "operatingMode": UserDefaults.standard.string(forKey: "operatingMode") ?? "unknown",
             "loggingToFile": String(UserDefaults.standard.bool(forKey: "loggingToFile")),
             "requestLog": String(UserDefaults.standard.bool(forKey: "requestLog")),
@@ -241,6 +244,9 @@ final class RequestTracker {
             "feature.enhancedObservability": String(UserDefaults.standard.bool(forKey: "feature.enhancedObservability")),
             "feature.accessibilityHardening": String(UserDefaults.standard.bool(forKey: "feature.accessibilityHardening"))
         ]
+        let settingsSnapshot = rawSettingsSnapshot.mapValues { value in
+            PrivacyRedactor.redactURLLikeString(value)
+        }
 
         let authEvidence = authFiles.map { file in
             RequestAuditPackage.AuthEvidence(
@@ -258,13 +264,16 @@ final class RequestTracker {
             )
         }
 
+        let sanitizedRecentErrors = Array(store.entries.filter { !$0.isSuccess }.prefix(200)).map(sanitizeRequestLogForExport)
+        let sanitizedRecentRequests = Array(requestHistory.prefix(300)).map(sanitizeRequestLogForExport)
+
         let package = RequestAuditPackage(
             exportedAt: Date(),
             requestCountInMemory: requestHistory.count,
             requestCountOnDisk: store.entries.count,
             stats: stats,
-            recentErrors: Array(store.entries.filter { !$0.isSuccess }.prefix(200)),
-            recentRequests: Array(requestHistory.prefix(300)),
+            recentErrors: sanitizedRecentErrors,
+            recentRequests: sanitizedRecentRequests,
             settingsSnapshot: settingsSnapshot,
             authEvidence: authEvidence
         )
@@ -272,5 +281,32 @@ final class RequestTracker {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(package)
+    }
+
+    private func sanitizeRequestLogForExport(_ log: RequestLog) -> RequestLog {
+        RequestLog(
+            id: log.id,
+            timestamp: log.timestamp,
+            requestId: log.requestId,
+            method: log.method,
+            endpoint: PrivacyRedactor.redactEndpointQuery(log.endpoint),
+            provider: log.provider,
+            model: log.model,
+            source: log.source,
+            sourceRaw: log.sourceRaw,
+            accountHint: log.accountHint,
+            requestPayloadSnippet: log.requestPayloadSnippet.map { PrivacyRedactor.redactStructuredText($0) },
+            resolvedModel: log.resolvedModel,
+            resolvedProvider: log.resolvedProvider,
+            inputTokens: log.inputTokens,
+            outputTokens: log.outputTokens,
+            durationMs: log.durationMs,
+            statusCode: log.statusCode,
+            requestSize: log.requestSize,
+            responseSize: log.responseSize,
+            errorMessage: log.errorMessage.map { PrivacyRedactor.redactStructuredText($0) },
+            fallbackAttempts: log.fallbackAttempts,
+            fallbackStartedFromCache: log.fallbackStartedFromCache
+        )
     }
 }

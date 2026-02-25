@@ -175,9 +175,11 @@ actor OpenAIQuotaFetcher {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        
-        let body = "refresh_token=\(refreshToken)"
-        request.httpBody = body.data(using: .utf8)
+
+        guard let body = Self.formEncodedRefreshTokenBody(refreshToken: refreshToken) else {
+            throw CodexQuotaError.tokenRefreshFailed
+        }
+        request.httpBody = body
         
         let (data, response) = try await session.data(for: request)
         
@@ -188,6 +190,15 @@ actor OpenAIQuotaFetcher {
         
         let tokenResponse = try JSONDecoder().decode(TokenRefreshResponse.self, from: data)
         return tokenResponse.accessToken
+    }
+
+    nonisolated static func formEncodedRefreshTokenBody(refreshToken: String) -> Data? {
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "refresh_token", value: refreshToken)]
+        guard let encoded = components.percentEncodedQuery else {
+            return nil
+        }
+        return Data(encoded.utf8)
     }
 
     /// Persist refreshed access token back to auth file using read-modify-write

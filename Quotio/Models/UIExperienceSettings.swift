@@ -40,6 +40,7 @@ enum InformationDensity: String, CaseIterable, Identifiable, Codable {
 @Observable
 final class UIExperienceSettingsManager {
     static let shared = UIExperienceSettingsManager()
+    nonisolated static let defaultCaptureRequestPayloadEvidence = false
 
     private let defaults = UserDefaults.standard
     private let highContrastKey = "ui.highContrastEnabled"
@@ -89,7 +90,7 @@ final class UIExperienceSettingsManager {
         self.informationDensity = InformationDensity(rawValue: savedDensity) ?? .comfortable
 
         if defaults.object(forKey: capturePayloadEvidenceKey) == nil {
-            defaults.set(true, forKey: capturePayloadEvidenceKey)
+            defaults.set(Self.defaultCaptureRequestPayloadEvidence, forKey: capturePayloadEvidenceKey)
         }
         self.captureRequestPayloadEvidence = defaults.bool(forKey: capturePayloadEvidenceKey)
     }
