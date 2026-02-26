@@ -10,12 +10,13 @@ import Foundation
 
 /// Auth file structure for Codex CLI (~/.codex/auth.json)
 nonisolated struct CodexCLIAuthFile: Codable, Sendable {
-    let OPENAI_API_KEY: String?
+    // EXTERNAL_PROTOCOL_FIELD: third-party auth.json field name, no env alias semantics.
+    let externalProtocolOpenAIAPIKey: String?
     let tokens: CodexCLITokens?
     let lastRefresh: String?
     
     enum CodingKeys: String, CodingKey {
-        case OPENAI_API_KEY
+        case externalProtocolOpenAIAPIKey = "OPENAI_API_KEY"
         case tokens
         case lastRefresh = "last_refresh"
     }

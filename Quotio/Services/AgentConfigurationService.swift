@@ -7,6 +7,14 @@ import Foundation
 
 actor AgentConfigurationService {
     private let fileManager = FileManager.default
+
+    // External protocol field names used by third-party CLI config files.
+    // EXTERNAL_PROTOCOL_FIELD markers denote one-way protocol bridges only,
+    // not repo env alias or compatibility fallback.
+    private enum ExternalProtocolField {
+        static let codexAuthOpenAIAPIKey = "OPENAI_API_KEY" // EXTERNAL_PROTOCOL_FIELD
+        static let geminiAPIKey = "GEMINI_API_KEY" // EXTERNAL_PROTOCOL_FIELD
+    }
     
     // MARK: - Saved Configuration Models
     
@@ -207,7 +215,7 @@ actor AgentConfigurationService {
                         baseURL = value
                         isProxy = value.contains("127.0.0.1") || value.contains("localhost")
                     }
-                } else if trimmed.contains("GEMINI_API_KEY") {
+                } else if trimmed.contains(ExternalProtocolField.geminiAPIKey) {
                     apiKey = extractExportValue(from: trimmed)
                 }
             }
@@ -573,7 +581,7 @@ actor AgentConfigurationService {
         Remove these environment variables from your shell profile:
         - CODE_ASSIST_ENDPOINT
         - GOOGLE_GEMINI_BASE_URL
-        - GEMINI_API_KEY (if using proxy key)
+        - \(ExternalProtocolField.geminiAPIKey) (if using proxy key)
         
         Gemini CLI will use Google's default API endpoint.
         """
@@ -926,7 +934,7 @@ actor AgentConfigurationService {
         
         let authJSON = """
         {
-          "OPENAI_API_KEY": "\(config.apiKey)"
+          "\(ExternalProtocolField.codexAuthOpenAIAPIKey)": "\(config.apiKey)"
         }
         """
         
@@ -1000,7 +1008,7 @@ actor AgentConfigurationService {
             exports = """
             # CLIProxyAPI Configuration for Gemini CLI (API Key Mode)
             export GOOGLE_GEMINI_BASE_URL="\(baseURL)"
-            export GEMINI_API_KEY="\(config.apiKey)"
+            export \(ExternalProtocolField.geminiAPIKey)="\(config.apiKey)"
             """
             instructions = "Add these environment variables to your shell profile."
         }
