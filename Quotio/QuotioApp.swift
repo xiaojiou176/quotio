@@ -420,14 +420,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func enforceSingleInstance() -> Bool {
+        // Test instances (e.g. Xcode Debug builds not in /Applications/) are allowed to
+        // coexist with the production instance.  Only the production instance itself
+        // needs to enforce the single-instance constraint.
+        guard CLIProxyManager.shared.isProductionMode else {
+            Log.warning("[AppDelegate] Running in test mode – skipping single-instance enforcement.")
+            return true
+        }
+
         guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
             return true
         }
 
         let currentPID = ProcessInfo.processInfo.processIdentifier
+        // Among all other Quotio processes sharing the same bundle ID, only treat
+        // those that are themselves production instances as conflicts.
+        // We identify production ownership via the lock file PID or the /Applications/ path.
         let otherInstances = NSRunningApplication
             .runningApplications(withBundleIdentifier: bundleIdentifier)
             .filter { $0.processIdentifier != currentPID }
+            .filter { instance in
+                // Primary check: the other instance owns the production lock file.
+                if let lockData = try? Data(contentsOf: URL(fileURLWithPath: CLIProxyManager.productionLockFilePath)),
+                   let lock    = try? JSONSerialization.jsonObject(with: lockData) as? [String: Any],
+                   let lockPid = lock["pid"] as? Int,
+                   lockPid == Int(instance.processIdentifier) {
+                    return true
+                }
+                // Fallback: the other instance runs from /Applications/ (path-based).
+                return instance.bundleURL?.path.hasPrefix("/Applications/") ?? false
+            }
 
         guard let existingInstance = otherInstances.sorted(by: { $0.processIdentifier < $1.processIdentifier }).first else {
             return true
@@ -438,7 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendTerminationAudit(
             "duplicate_detected selfPID=\(currentPID), existingPID=\(existingInstance.processIdentifier), action=terminate_self"
         )
-        Log.warning("[AppDelegate] Duplicate Quotio instance detected. Activating PID \(existingInstance.processIdentifier) and terminating PID \(currentPID).")
+        Log.warning("[AppDelegate] Duplicate production Quotio detected. Activating PID \(existingInstance.processIdentifier) and terminating PID \(currentPID).")
         DispatchQueue.main.async {
             NSApp.terminate(nil)
         }
@@ -618,6 +640,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         appendTerminationAudit("will_terminate selfPID=\(ProcessInfo.processInfo.processIdentifier), skipCleanup=false")
         AppLifecycleState.isTerminating = true
+
+        // Release the production port lock so that re-launches and test instances
+        // can immediately discover that this production instance has exited cleanly.
+        CLIProxyManager.shared.releaseProductionLock()
 
         // Stop background polling
         AtomFeedUpdateService.shared.stopPolling()

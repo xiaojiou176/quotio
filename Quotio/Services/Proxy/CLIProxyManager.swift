@@ -49,7 +49,97 @@ final class CLIProxyManager {
     nonisolated static func terminateProxyOnShutdown() {
         // Intentionally no-op: never terminate external processes by port during app shutdown.
     }
-    
+
+    // MARK: - Production Mode & Port Lock Protection
+    //
+    // Goal: ensure only one production (official) Quotio+CLIProxyAPI can run at a time,
+    // while allowing test instances (from Xcode / DerivedData) to coexist without
+    // stealing ports from the production instance.
+    //
+    // Detection strategy (dual-layer):
+    //   A. Path-based  : bundle installed at /Applications/ → production
+    //   B. Intent file : Launch-Quotio.command writes ~/.quotio/.production-intent
+    //                    within the last 60 s before opening Quotio → production
+    //
+    // Port protection:
+    //   Production → uses preferred port (default 8317); writes production.lock
+    //   Test        → starts port scan from 18400; skips ports listed in production.lock
+
+    /// Exposed for QuotioApp.swift single-instance check.
+    /// Computed properties are `nonisolated` by default and therefore accessible
+    /// from any context without actor-isolation issues.
+    nonisolated static var productionLockFilePath: String  { NSHomeDirectory() + "/.quotio/production.lock" }
+    nonisolated static var productionIntentFilePath: String { NSHomeDirectory() + "/.quotio/.production-intent" }
+
+    /// Ports below this value are reserved for the production instance.
+    nonisolated static var testPortRangeStart: UInt16 { 18400 }
+
+    /// Hard floor for the production preferred port.
+    /// Matches ProxyStatus.port default; used as fallback when UserDefaults has been
+    /// contaminated by a test instance that wrote a port in the test range (≥ testPortRangeStart).
+    nonisolated static var productionDefaultPort: UInt16 { 8317 }
+
+    /// Returns true when this process should be treated as the official production instance.
+    ///
+    /// Called from `@MainActor` context and also from `nonisolated` helpers, so kept `nonisolated`.
+    nonisolated var isProductionMode: Bool {
+        // Method A: installed in /Applications/
+        if Bundle.main.bundlePath.hasPrefix("/Applications/") {
+            return true
+        }
+        // Method B: intent file written by Launch-Quotio.command within the last 60 s
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: Self.productionIntentFilePath),
+           let modDate = attrs[.modificationDate] as? Date,
+           Date().timeIntervalSince(modDate) < 60 {
+            return true
+        }
+        return false
+    }
+
+    /// Ports currently reserved by a live production instance.
+    /// Returns an empty set when no production instance is running.
+    nonisolated static func lockedProductionPorts() -> Set<UInt16> {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: productionLockFilePath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+        // Validate that the lock holder PID is still alive before honouring the reservation.
+        if let pid = json["pid"] as? Int, pid > 0, kill(Int32(pid), 0) != 0 {
+            // Process gone – stale lock; treat as empty.
+            return []
+        }
+        var ports = Set<UInt16>()
+        if let port    = json["port"]          as? Int { ports.insert(UInt16(port)) }
+        if let cliPort = json["cli_proxy_port"] as? Int { ports.insert(UInt16(cliPort)) }
+        return ports
+    }
+
+    /// Writes the production lock file so that test instances can discover and avoid these ports.
+    nonisolated func writeProductionLock(port: UInt16, cliProxyPort: UInt16) {
+        let lock: [String: Any] = [
+            "pid":            ProcessInfo.processInfo.processIdentifier,
+            "port":           Int(port),
+            "cli_proxy_port": Int(cliProxyPort),
+            "timestamp":      Int(Date().timeIntervalSince1970),
+            "quotio_path":    Bundle.main.bundlePath,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: lock, options: .prettyPrinted) else { return }
+        let dir = NSHomeDirectory() + "/.quotio"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try? data.write(to: URL(fileURLWithPath: Self.productionLockFilePath))
+        Log.proxy("[CLIProxyManager] Production lock written – port=\(port) cliProxyPort=\(cliProxyPort)")
+    }
+
+    /// Removes the production lock file on clean exit (only if we own it).
+    nonisolated func releaseProductionLock() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: Self.productionLockFilePath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid  = json["pid"] as? Int,
+              pid == ProcessInfo.processInfo.processIdentifier else { return }
+        try? FileManager.default.removeItem(atPath: Self.productionLockFilePath)
+        Log.proxy("[CLIProxyManager] Production lock released.")
+    }
+
     private var process: Process?
     private var testProcess: Process?
     private var authProcess: Process?
@@ -771,20 +861,42 @@ final class CLIProxyManager {
         
         // Resolve runtime ports without killing existing listeners.
         let bridgeEnabled = useBridgeMode
+
+        // Guard against UserDefaults port contamination: if a test instance previously wrote
+        // a port in the test range (≥ testPortRangeStart) into the shared "proxyPort" key,
+        // the production instance must not inherit it and risk landing outside its own range.
+        let preferredPort: UInt16
+        if isProductionMode && proxyStatus.port >= Self.testPortRangeStart {
+            preferredPort = Self.productionDefaultPort
+            Log.proxy("[CLIProxyManager] Production mode: preferred port \(proxyStatus.port) is in test range; resetting to \(preferredPort)")
+        } else {
+            preferredPort = proxyStatus.port
+        }
+
         let (userPort, cliProxyPort) = try resolveStartupPorts(
-            preferredUserPort: proxyStatus.port,
+            preferredUserPort: preferredPort,
             bridgeEnabled: bridgeEnabled
         )
+        // Sync proxyStatus and UserDefaults whenever the resolved port differs from what was stored.
+        // Covers two cases: (a) a genuine port conflict required shifting, (b) contamination reset.
         if userPort != proxyStatus.port {
-            let previousPort = proxyStatus.port
             proxyStatus.port = userPort
             UserDefaults.standard.set(Int(userPort), forKey: "proxyPort")
-            Log.proxy("[CLIProxyManager] Port \(previousPort) occupied, auto-shifted to \(userPort)")
+        }
+        // Only emit the "port occupied" log for genuine shifts, not contamination resets
+        // (contamination resets are already logged earlier with a dedicated message).
+        if userPort != preferredPort {
+            Log.proxy("[CLIProxyManager] Port \(preferredPort) occupied, auto-shifted to \(userPort)")
         }
         
         // Update config to use the correct port
         updateConfigPort(cliProxyPort)
-        
+
+        // Register this instance as the production owner so test instances avoid these ports.
+        if isProductionMode {
+            writeProductionLock(port: userPort, cliProxyPort: cliProxyPort)
+        }
+
         // Use effectiveBinaryPath to support versioned storage
         let activeBinaryPath = effectiveBinaryPath
         
@@ -1760,9 +1872,14 @@ extension CLIProxyManager {
     }
     
     private func resolveStartupPorts(preferredUserPort: UInt16, bridgeEnabled: Bool) throws -> (userPort: UInt16, cliProxyPort: UInt16) {
-        try Self.resolveStartupPorts(
+        let prodMode = isProductionMode
+        // Pre-fetch locked ports once to avoid repeated file I/O inside the port-scan loop.
+        let locked = prodMode ? [] : Self.lockedProductionPorts()
+        return try Self.resolveStartupPorts(
             preferredUserPort: preferredUserPort,
             bridgeEnabled: bridgeEnabled,
+            isProductionMode: prodMode,
+            lockedProductionPorts: locked,
             isPortInUse: { [self] port in
                 isPortInUse(port)
             }
@@ -1772,20 +1889,27 @@ extension CLIProxyManager {
     nonisolated static func resolveStartupPorts(
         preferredUserPort: UInt16,
         bridgeEnabled: Bool,
+        isProductionMode: Bool = true,
+        lockedProductionPorts: Set<UInt16> = [],
         isPortInUse: (UInt16) -> Bool
     ) throws -> (userPort: UInt16, cliProxyPort: UInt16) {
-        for rawPort in Int(preferredUserPort)...Int(UInt16.max) {
+        // Test instances must not scan below testPortRangeStart so they can never
+        // compete with the production instance's reserved port range.
+        let startPort: UInt16 = isProductionMode
+            ? preferredUserPort
+            : max(preferredUserPort, testPortRangeStart)
+
+        for rawPort in Int(startPort)...Int(UInt16.max) {
             let userPort = UInt16(rawPort)
-            if isPortInUse(userPort) {
-                continue
-            }
+            // Test instances skip ports currently held by a live production instance.
+            if !isProductionMode && lockedProductionPorts.contains(userPort) { continue }
+            if isPortInUse(userPort) { continue }
             if !bridgeEnabled {
                 return (userPort, userPort)
             }
             let cliProxyPort = ProxyBridge.internalPort(from: userPort)
-            if cliProxyPort == userPort || isPortInUse(cliProxyPort) {
-                continue
-            }
+            if !isProductionMode && lockedProductionPorts.contains(cliProxyPort) { continue }
+            if cliProxyPort == userPort || isPortInUse(cliProxyPort) { continue }
             return (userPort, cliProxyPort)
         }
         throw ProxyError.startupFailed
