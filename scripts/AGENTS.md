@@ -2,6 +2,19 @@
 
 11 bash scripts for building, packaging, notarizing, and releasing Quotio.
 
+## 0) Purpose / Stack / Navigation / Verification
+
+- Purpose: own Quotio build/release/notarization automation and keep distribution pipeline reproducible.
+- Stack: Bash + Xcode CLI + Apple notarization toolchain + Sparkle appcast tooling.
+- Directory navigation:
+  - Pipeline orchestrator: `release.sh`
+  - Build/package: `build.sh`, `package.sh`
+  - Notarization/signing: `notarize.sh`, `generate-appcast*.sh`
+  - Shared helpers: `config.sh`
+- Minimal verification commands:
+  - `bash -n scripts/*.sh`
+  - `./scripts/build.sh`
+
 ## Quick Reference
 
 | Command | Purpose |
@@ -120,3 +133,36 @@ Auto-updates CHANGELOG.md from conventional commits on master.
 - Use colored output for visibility
 - Measure and report execution time
 - Support both local and CI execution
+
+## Governance Addendum (System 3+4)
+
+### Lazy Load
+
+1. Read `AGENTS.md` then `CLAUDE.md` in this directory.
+2. Load only the target scripts related to current task (build/package/notarize/release).
+
+### Search Before Writing
+
+```bash
+rg -n "keyword|scriptName|envVar" .
+rg --files . | rg "keyword|\\.sh$"
+```
+
+If not reusing an existing implementation, include this in the delivery report:
+```text
+[Reuse Decision]
+- Search keywords:
+- Reused path (if any):
+- Reason for not reusing (if any):
+```
+
+### Secret and Environment Boundary
+
+- Signing/release secrets must come from root `.env` or process ENV only.
+- Never hardcode credentials in scripts or logs.
+- Before commit, run:
+
+```bash
+bash ../../scripts/secret-governance-check.sh
+bash ../../.githooks/pre-commit
+```

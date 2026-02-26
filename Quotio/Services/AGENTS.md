@@ -2,6 +2,19 @@
 
 30 services implementing business logic, API clients, and system integrations.
 
+## 0) Purpose / Stack / Navigation / Verification
+
+- Purpose: own service/runtime logic for Quotio, including proxy lifecycle, API access, quota fetching, and agent configuration.
+- Stack: Swift 6, Swift Concurrency (`actor`, `@MainActor @Observable`), macOS 15+.
+- Directory navigation:
+  - Core runtime: `CLIProxyManager.swift`, `ProxyBridge.swift`, `ProxyStorageManager.swift`
+  - API client: `ManagementAPIClient.swift`
+  - Quota pipeline: `*QuotaFetcher.swift`
+  - Agent config: `AgentConfigurationService.swift`, `AgentDetectionService.swift`
+- Minimal verification commands:
+  - `./scripts/test.sh`
+  - `xcodebuild -project Quotio.xcodeproj -scheme Quotio -configuration Debug build`
+
 ## Architecture
 
 Three concurrency patterns used:
@@ -142,4 +155,37 @@ CLIProxyManager
 
 StatusBarManager
 └── StatusBarMenuBuilder
+```
+
+## Governance Addendum (System 3+4)
+
+### Lazy Load
+
+1. Read this file then sibling `CLAUDE.md`.
+2. Load only related service files and their direct caller in `../ViewModels/`.
+
+### Search Before Writing
+
+```bash
+rg -n "keyword|serviceName|actorName" .
+rg --files . | rg "keyword|Service|Fetcher|Manager"
+```
+
+If not reusing an existing implementation, include this in the delivery report:
+```text
+[Reuse Decision]
+- Search keywords:
+- Reused path (if any):
+- Reason for not reusing (if any):
+```
+
+### Secret Boundary and Gate
+
+- Real keys/tokens must come from root `.env` or process ENV only.
+- Never hardcode credentials or print tokens in logs.
+- Before commit, run:
+
+```bash
+bash ../../../scripts/secret-governance-check.sh
+bash ../../../.githooks/pre-commit
 ```

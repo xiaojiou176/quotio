@@ -2,6 +2,18 @@
 
 33 files: 17 Components + 7 Screens + 1 Onboarding + supporting views.
 
+## 0) Purpose / Stack / Navigation / Verification
+
+- Purpose: own Quotio UI presentation layer for components, screens, and onboarding experiences.
+- Stack: SwiftUI + Swift 6 + macOS 15+.
+- Directory navigation:
+  - Reusable components: `Components/`
+  - Page-level views: `Screens/`
+  - Onboarding flow: `Onboarding/`
+- Minimal verification commands:
+  - `./scripts/test.sh`
+  - `xcodebuild -project Quotio.xcodeproj -scheme Quotio -configuration Debug build`
+
 ## Structure
 
 ```
@@ -134,3 +146,36 @@ Uses `NavigationSplitView` with sidebar:
 - Provide `.help()` for complex controls
 - Enable text selection where appropriate
 - Use semantic colors from asset catalog
+
+## Governance Addendum (System 3+4)
+
+### Lazy Load
+
+1. Read this file, then local `CLAUDE.md`.
+2. Load only affected views and direct state source in `../ViewModels/`.
+
+### Search Before Writing
+
+```bash
+rg -n "keyword|viewName|componentName" .
+rg --files . | rg "keyword|Screen|Card|View|Row"
+```
+
+If not reusing an existing implementation, include this in the delivery report:
+```text
+[Reuse Decision]
+- Search keywords:
+- Reused path (if any):
+- Reason for not reusing (if any):
+```
+
+### Secret Boundary and Gate
+
+- UI layer must not hardcode or display real credentials.
+- Real secrets are allowed only from root `.env` or process ENV.
+- Before commit, run:
+
+```bash
+bash ../../../scripts/secret-governance-check.sh
+bash ../../../.githooks/pre-commit
+```
