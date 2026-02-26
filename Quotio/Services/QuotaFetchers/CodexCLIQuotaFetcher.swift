@@ -16,7 +16,7 @@ nonisolated struct CodexCLIAuthFile: Codable, Sendable {
     let lastRefresh: String?
     
     enum CodingKeys: String, CodingKey {
-        case externalProtocolOpenAIAPIKey = "OPENAI_API_KEY"
+        case externalProtocolOpenAIAPIKey = "OPENAI_API_KEY" // EXTERNAL_PROTOCOL_FIELD
         case tokens
         case lastRefresh = "last_refresh"
     }
