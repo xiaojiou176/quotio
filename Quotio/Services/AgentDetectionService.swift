@@ -129,16 +129,7 @@ actor AgentDetectionService {
         }
         
         // fnm: $XDG_DATA_HOME/fnm (defaults to ~/.local/share/fnm), then legacy ~/.fnm
-        let xdgDataHome: String
-        if let envValue = ProcessInfo.processInfo.environment["XDG_DATA_HOME"], !envValue.isEmpty {
-            xdgDataHome = envValue
-        } else {
-            xdgDataHome = "\(home)/.local/share"
-        }
-        let fnmPaths = [
-            "\(xdgDataHome)/fnm/node-versions",
-            "\(home)/.fnm/node-versions"  // legacy path
-        ]
+        let fnmPaths = XDGPaths.fnmNodeVersionsBasePaths(homeDirectory: home)
 
         for fnmBase in fnmPaths {
             if let versions = try? fileManager.contentsOfDirectory(atPath: fnmBase), !versions.isEmpty {
