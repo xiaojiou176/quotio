@@ -26,6 +26,13 @@ PREFLIGHT_LOG="$RUN_DIR/preflight.log"
 
 mkdir -p "$RUN_DIR" "$DERIVED_DATA_PATH"
 
+prune_runtime_cache() {
+  if [[ -f "$REPO_ROOT/scripts/runtime-prune.sh" ]]; then
+    bash "$REPO_ROOT/scripts/runtime-prune.sh" >/dev/null 2>&1 || true
+  fi
+}
+trap prune_runtime_cache EXIT
+
 log() {
   printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG_FILE"
 }

@@ -13,6 +13,13 @@ LOG_FILE="$LOG_DIR/test_$STAMP.log"
 mkdir -p "$DERIVED_DATA_DIR" "$LOG_DIR" "$COVERAGE_DIR"
 export LLVM_PROFILE_FILE="$COVERAGE_DIR/default-%p.profraw"
 
+prune_runtime_cache() {
+  if [[ -f "$REPO_ROOT/scripts/runtime-prune.sh" ]]; then
+    bash "$REPO_ROOT/scripts/runtime-prune.sh" >/dev/null 2>&1 || true
+  fi
+}
+trap prune_runtime_cache EXIT
+
 echo "[1/3] build-for-testing (derivedDataPath=$DERIVED_DATA_DIR)"
 xcodebuild \
   -project "$QUOTIO_ROOT/Quotio.xcodeproj" \
