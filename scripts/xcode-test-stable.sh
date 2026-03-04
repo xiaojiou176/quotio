@@ -11,12 +11,17 @@ QUOTIO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$QUOTIO_ROOT/.." && pwd)"
 
 PROJECT_PATH="${PROJECT_PATH:-$QUOTIO_ROOT/Quotio.xcodeproj}"
-SCHEME="${XCODE_SCHEME:-Quotio}"
-DESTINATION="${XCODE_DESTINATION:-platform=macOS}"
+DESTINATION="${XCODE_DESTINATION:-platform=macOS,arch=arm64}"
 CONFIGURATION="${XCODE_CONFIGURATION:-Debug}"
-DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$REPO_ROOT/.runtime-cache/build/quotio-xcode-test-stable-deriveddata}"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/quotio-xcode-test-stable-deriveddata}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-1200}"
 HEARTBEAT_SECONDS="${HEARTBEAT_SECONDS:-15}"
+RUN_UI_TESTS="${RUN_UI_TESTS:-0}"
+DEFAULT_SCHEME="QuotioUnitTests"
+if [[ "$RUN_UI_TESTS" == "1" ]]; then
+  DEFAULT_SCHEME="Quotio"
+fi
+SCHEME="${XCODE_SCHEME:-$DEFAULT_SCHEME}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 RUN_DIR="$REPO_ROOT/.runtime-cache/test_output/quotio-xcode-test-stable/$STAMP"
@@ -28,7 +33,8 @@ mkdir -p "$RUN_DIR" "$DERIVED_DATA_PATH"
 
 prune_runtime_cache() {
   if [[ -f "$REPO_ROOT/scripts/runtime-prune.sh" ]]; then
-    bash "$REPO_ROOT/scripts/runtime-prune.sh" >/dev/null 2>&1 || true
+    # Avoid blocking test-script exit on large cache pruning.
+    (bash "$REPO_ROOT/scripts/runtime-prune.sh" >/dev/null 2>&1 || true) &
   fi
 }
 trap prune_runtime_cache EXIT
@@ -70,6 +76,7 @@ preflight() {
   echo "derived_data=$DERIVED_DATA_PATH" >> "$PREFLIGHT_LOG"
   echo "timeout_seconds=$TIMEOUT_SECONDS" >> "$PREFLIGHT_LOG"
   echo "heartbeat_seconds=$HEARTBEAT_SECONDS" >> "$PREFLIGHT_LOG"
+  echo "run_ui_tests=$RUN_UI_TESTS" >> "$PREFLIGHT_LOG"
 
   command -v xcodebuild >/dev/null 2>&1 || {
     echo "xcodebuild not found" | tee -a "$PREFLIGHT_LOG"
@@ -114,7 +121,7 @@ write_summary() {
 }
 
 run_test_with_timeout() {
-  python3 - "$TIMEOUT_SECONDS" "$HEARTBEAT_SECONDS" "$LOG_FILE" "$PROJECT_PATH" "$SCHEME" "$DESTINATION" "$CONFIGURATION" "$DERIVED_DATA_PATH" <<'PY'
+  python3 - "$TIMEOUT_SECONDS" "$HEARTBEAT_SECONDS" "$LOG_FILE" "$PROJECT_PATH" "$SCHEME" "$DESTINATION" "$CONFIGURATION" "$DERIVED_DATA_PATH" "$RUN_UI_TESTS" <<'PY'
 import os
 import select
 import signal
@@ -130,6 +137,7 @@ scheme = sys.argv[5]
 destination = sys.argv[6]
 configuration = sys.argv[7]
 derived_data = sys.argv[8]
+run_ui_tests = sys.argv[9] == "1"
 
 cmd = [
     "xcodebuild",
@@ -138,8 +146,13 @@ cmd = [
     "-configuration", configuration,
     "-destination", destination,
     "-derivedDataPath", derived_data,
+    "-parallel-testing-enabled", "NO",
+    "CODE_SIGNING_ALLOWED=NO",
+    "CODE_SIGNING_REQUIRED=NO",
     "test",
 ]
+if not run_ui_tests:
+    cmd.extend(["-only-testing:QuotioTests"])
 
 deadline = time.time() + timeout_seconds
 started_at = time.time()
@@ -216,7 +229,11 @@ PY
 }
 
 should_retry_runner_hang() {
-  grep -q "The test runner hung before establishing connection" "$LOG_FILE"
+  grep -Eq "The test runner hung before establishing connection|The test runner timed out while preparing to run tests" "$LOG_FILE"
+}
+
+should_retry_sparkle_artifact_missing() {
+  grep -q "There is no Info.plist found at '.*Sparkle.xcframework/Info.plist'" "$LOG_FILE"
 }
 
 main() {
@@ -237,9 +254,19 @@ main() {
   set +e
   run_test_with_timeout
   local rc=$?
-  if [[ "$rc" -ne 0 ]] && should_retry_runner_hang; then
-    log "detected test-runner hang, retrying once after cleaning test logs"
+  local runner_hang_retries=0
+  local max_runner_hang_retries="${RUNNER_HANG_MAX_RETRIES:-0}"
+  while [[ "$rc" -ne 0 ]] && should_retry_runner_hang && (( runner_hang_retries < max_runner_hang_retries )); do
+    runner_hang_retries=$((runner_hang_retries + 1))
+    log "detected test-runner hang, retry ${runner_hang_retries}/${max_runner_hang_retries} after cleaning test logs and source packages"
     rm -rf "$DERIVED_DATA_PATH/Logs/Test"
+    rm -rf "$DERIVED_DATA_PATH/SourcePackages"
+    run_test_with_timeout
+    rc=$?
+  done
+  if [[ "$rc" -ne 0 ]] && should_retry_sparkle_artifact_missing; then
+    log "detected Sparkle xcframework corruption, retrying once after resetting source packages"
+    rm -rf "$DERIVED_DATA_PATH/SourcePackages"
     run_test_with_timeout
     rc=$?
   fi

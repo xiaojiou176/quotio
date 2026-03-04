@@ -296,13 +296,82 @@ struct QuotioApp: App {
 }
 
 private struct UITestHarnessView: View {
+    private enum HarnessPage: String, CaseIterable, Identifiable {
+        case dashboard = "Dashboard"
+        case apiKeys = "API Keys"
+        case logs = "Logs"
+
+        var id: String { rawValue }
+
+        var accessibilityID: String {
+            switch self {
+            case .dashboard:
+                return "ui-test-tab-dashboard"
+            case .apiKeys:
+                return "ui-test-tab-apikeys"
+            case .logs:
+                return "ui-test-tab-logs"
+            }
+        }
+
+        var stateToken: String {
+            switch self {
+            case .dashboard:
+                return "dashboard"
+            case .apiKeys:
+                return "apiKeys"
+            case .logs:
+                return "logs"
+            }
+        }
+    }
+
+    @State private var selectedPage: HarnessPage = .dashboard
+
     var body: some View {
         VStack(spacing: 12) {
             Text("ui.test.harness.title".localized(fallback: "Quotio UI Test Harness"))
                 .font(.title3.weight(.semibold))
+                .accessibilityIdentifier("ui-test-harness-title")
             Text("ui.test.harness.ready".localized(fallback: "UI 测试就绪"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("ui-test-harness-ready")
+            HStack(spacing: 10) {
+                Text("Dashboard")
+                    .accessibilityIdentifier("ui-test-keypage-dashboard")
+                Text("API Keys")
+                    .accessibilityIdentifier("ui-test-keypage-apikeys")
+                Text("Logs")
+                    .accessibilityIdentifier("ui-test-keypage-logs")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            Picker("Harness Page", selection: $selectedPage) {
+                ForEach(HarnessPage.allCases) { page in
+                    Text(page.rawValue).tag(page)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 300)
+
+            Text(selectedPage.rawValue)
+                .font(.headline)
+                .accessibilityIdentifier("ui-test-selected-page")
+                .accessibilityValue(selectedPage.stateToken)
+
+            HStack(spacing: 8) {
+                ForEach(HarnessPage.allCases) { page in
+                    Button(page.rawValue) {
+                        selectedPage = page
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .accessibilityIdentifier(page.accessibilityID)
+                    .accessibilityValue(selectedPage == page ? "1" : "0")
+                }
+            }
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

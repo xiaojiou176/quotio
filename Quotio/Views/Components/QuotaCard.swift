@@ -10,6 +10,10 @@ struct QuotaCard: View {
     let accounts: [AuthFile]
     var quotaData: [String: ProviderQuotaData]?
     @State private var uiExperience = UIExperienceSettingsManager.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var headerFeedbackScale: CGFloat = 1
+    @State private var headerFeedbackOpacity: Double = 0
+    @State private var isCardHovered = false
     
     private var readyCount: Int {
         accounts.filter { $0.status == "ready" && !$0.disabled }.count
@@ -58,6 +62,64 @@ struct QuotaCard: View {
         }
         return "quota.status.error".localized(fallback: "错误")
     }
+
+    private enum SummaryStatus: Equatable {
+        case ready
+        case cooling
+        case error
+    }
+
+    private var summaryStatus: SummaryStatus {
+        if readyCount > 0 { return .ready }
+        if coolingCount > 0 { return .cooling }
+        return .error
+    }
+
+    private var summarySymbolName: String {
+        switch summaryStatus {
+        case .ready:
+            return "checkmark.circle.fill"
+        case .cooling:
+            return "clock.badge.exclamationmark"
+        case .error:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private var summaryTint: Color {
+        switch summaryStatus {
+        case .ready:
+            return .semanticSuccess
+        case .cooling:
+            return .semanticWarning
+        case .error:
+            return .semanticDanger
+        }
+    }
+
+    private func triggerSummaryFeedback(for newStatus: SummaryStatus) {
+        guard !reduceMotion, newStatus != .cooling else {
+            headerFeedbackScale = 1
+            headerFeedbackOpacity = 0
+            return
+        }
+
+        let peakOpacity: Double = newStatus == .error ? 0.32 : 0.24
+        let peakScale: CGFloat = newStatus == .error ? 1.08 : 1.05
+        headerFeedbackScale = 0.97
+        headerFeedbackOpacity = 0
+
+        withMotionAwareAnimation(QuotioMotion.successEmphasis, reduceMotion: reduceMotion) {
+            headerFeedbackScale = peakScale
+            headerFeedbackOpacity = peakOpacity
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            withMotionAwareAnimation(QuotioMotion.contentSwap, reduceMotion: reduceMotion) {
+                headerFeedbackScale = 1
+                headerFeedbackOpacity = 0
+            }
+        }
+    }
     
     var body: some View {
         GroupBox {
@@ -81,10 +143,22 @@ struct QuotaCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(
-                    uiExperience.highContrastEnabled ? Color.primary.opacity(0.35) : Color.clear,
+                    uiExperience.highContrastEnabled
+                    ? Color.primary.opacity(0.35)
+                    : summaryTint.opacity(isCardHovered ? 0.18 : 0.1),
                     lineWidth: 1
                 )
         )
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(summaryTint.opacity(isCardHovered ? 0.04 : 0))
+        )
+        .onHover { hovering in
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                isCardHovered = hovering
+            }
+        }
+        .motionAwareAnimation(QuotioMotion.hover, value: isCardHovered)
     }
     
     // MARK: - Header
@@ -104,17 +178,30 @@ struct QuotaCard: View {
             Spacer()
             
             HStack(spacing: 4) {
-                Image(systemName: readyCount > 0 ? "checkmark.circle.fill" : (coolingCount > 0 ? "clock.badge.exclamationmark" : "xmark.circle.fill"))
+                Image(systemName: summarySymbolName)
                     .font(.caption)
-                    .foregroundStyle(readyCount > 0 ? Color.semanticSuccess : (coolingCount > 0 ? Color.semanticWarning : Color.semanticDanger))
+                    .foregroundStyle(summaryTint)
                     .accessibilityHidden(true)
                 Text(statusLabel)
                     .font(.caption)
                     .fontWeight(.medium)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(summaryTint.opacity(headerFeedbackOpacity), in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(summaryTint.opacity(0.24), lineWidth: 0.8)
+            )
+            .scaleEffect(headerFeedbackScale)
+            .motionAwareAnimation(QuotioMotion.successEmphasis, value: headerFeedbackScale)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("quota.status.summary".localized(fallback: "状态摘要"))
             .accessibilityValue(statusLabel)
+        }
+        .onChange(of: summaryStatus) { oldStatus, newStatus in
+            guard oldStatus != newStatus else { return }
+            triggerSummaryFeedback(for: newStatus)
         }
     }
     
@@ -141,7 +228,7 @@ struct QuotaCard: View {
     private var estimatedQuotaSection: some View {
         VStack(spacing: 12) {
             QuotaSection(
-                title: "quota.session".localized(fallback: "Session"),
+                title: "quota.session".localized(fallback: "会话"),
                 remainingPercent: sessionRemainingPercent,
                 resetTime: sessionResetTime,
                 tint: sessionRemainingPercent > 50 ? Color.semanticSuccess : (sessionRemainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
@@ -149,7 +236,7 @@ struct QuotaCard: View {
             
             if provider == .claude || provider == .codex {
                 QuotaSection(
-                    title: "quota.weekly".localized(fallback: "Weekly"),
+                    title: "quota.weekly".localized(fallback: "每周"),
                     remainingPercent: weeklyRemainingPercent,
                     resetTime: weeklyResetTime,
                     tint: weeklyRemainingPercent > 50 ? Color.semanticSuccess : (weeklyRemainingPercent > 20 ? Color.semanticWarning : Color.semanticDanger)
@@ -171,10 +258,12 @@ struct QuotaCard: View {
     private var sessionResetTime: String {
         if let coolingAccount = accounts.first(where: { $0.status == "cooling" }),
            let message = coolingAccount.humanReadableStatus,
-           let minutes = parseMinutes(from: message) {
-            return minutes >= 60 ? "\(minutes / 60)h" : "\(minutes)m"
+           let minutes = QuotaCardTimeParser.parseMinutes(from: message) {
+            return minutes >= 60
+                ? "quota.time.hours".localized(fallback: "\(minutes / 60)小时")
+                : "quota.time.minutes".localized(fallback: "\(minutes)分钟")
         }
-        return coolingCount > 0 ? "~1h" : "—"
+        return coolingCount > 0 ? "quota.time.approxHour".localized(fallback: "约1小时") : "—"
     }
     
     private var weeklyResetTime: String {
@@ -182,21 +271,9 @@ struct QuotaCard: View {
         let today = Date()
         let weekday = calendar.component(.weekday, from: today)
         let daysUntilMonday = (9 - weekday) % 7
-        return daysUntilMonday == 0 ? "today" : "\(daysUntilMonday)d"
-    }
-    
-    private func parseMinutes(from message: String) -> Int? {
-        let pattern = #"(\d+)\s*(minute|min|hour|hr|h|m)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-              let match = regex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)),
-              let numberRange = Range(match.range(at: 1), in: message),
-              let unitRange = Range(match.range(at: 2), in: message),
-              let number = Int(message[numberRange]) else {
-            return nil
-        }
-        
-        let unit = String(message[unitRange]).lowercased()
-        return unit.hasPrefix("h") ? number * 60 : number
+        return daysUntilMonday == 0
+            ? "quota.time.today".localized(fallback: "今天")
+            : "quota.time.days".localized(fallback: "\(daysUntilMonday)天")
     }
     
     // MARK: - Status Breakdown
@@ -224,6 +301,35 @@ struct QuotaCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+enum QuotaCardTimeParser {
+    static func parseMinutes(from message: String) -> Int? {
+        let pattern = #"(\d+)\s*(minutes?|mins?\.?|minute|min|hours?|hrs?\.?|hour|hr|h|m|分鐘|分钟|分|小時|小时|时|時|鐘頭|钟头|鐘|钟)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return nil
+        }
+
+        let matches = regex.matches(in: message, range: NSRange(message.startIndex..., in: message))
+        guard !matches.isEmpty else { return nil }
+
+        var totalMinutes = 0
+        for match in matches {
+            guard let numberRange = Range(match.range(at: 1), in: message),
+                  let unitRange = Range(match.range(at: 2), in: message),
+                  let number = Int(message[numberRange]) else {
+                continue
+            }
+            let unit = String(message[unitRange]).lowercased()
+            if unit.hasPrefix("h") || unit.contains("小") || unit.contains("时") || unit.contains("時") || unit.contains("钟头") || unit.contains("鐘頭") {
+                totalMinutes += number * 60
+            } else {
+                totalMinutes += number
+            }
+        }
+
+        return totalMinutes > 0 ? totalMinutes : nil
     }
 }
 
@@ -277,7 +383,7 @@ private struct QuotaSection: View {
                         HStack(spacing: 2) {
                             Image(systemName: "clock")
                                 .font(.caption2)
-                            Text(verbatim: "reset \(resetTime)")
+                            Text("quota.resetIn".localized(fallback: "重置 \(resetTime)"))
                                 .font(.caption)
                         }
                         .foregroundStyle(.secondary)
@@ -292,7 +398,7 @@ private struct QuotaSection: View {
                     Capsule()
                         .fill(semanticTint)
                         .frame(width: proxy.size.width * min(1, progressWidth))
-                        .motionAwareAnimation(.smooth(duration: 0.3), value: progressWidth)
+                        .motionAwareAnimation(QuotioMotion.contentSwap, value: progressWidth)
                 }
             }
             .frame(height: 8)

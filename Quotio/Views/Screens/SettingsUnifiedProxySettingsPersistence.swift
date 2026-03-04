@@ -6,6 +6,10 @@
 import SwiftUI
 
 extension UnifiedProxySettingsSection {
+    private var configLoadingFeedbackDelay: Duration {
+        .milliseconds(max(1, TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) / 2))
+    }
+
     func loadConfig() async {
         isLoading = true
         isLoadingConfig = true
@@ -50,7 +54,7 @@ extension UnifiedProxySettingsSection {
             await refreshUpstreamHitCounts()
             isLoading = false
             
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: configLoadingFeedbackDelay)
             isLoadingConfig = false
         } catch {
             loadError = error.localizedDescription

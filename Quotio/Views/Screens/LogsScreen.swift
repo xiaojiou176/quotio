@@ -10,10 +10,12 @@ import UniformTypeIdentifiers
 struct LogsScreen: View {
     @Environment(QuotaViewModel.self) private var viewModel
     @Environment(LogsViewModel.self) private var logsViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(QuotioMotionProfileStorage.key) private var motionProfileRaw = QuotioMotionProfile.default.rawValue
     @State private var featureFlags = FeatureFlagManager.shared
     @State private var uiMetrics = UIBaselineMetricsTracker.shared
     @State private var selectedTab: LogsTab = .requests
-    @State private var autoScroll = true
+    @State private var autoScroll = false
     @State private var filterLevel: LogEntry.LogLevel? = nil
     @State private var proxyLogViewMode: ProxyLogViewMode = .structured
     @State private var searchText = ""
@@ -26,9 +28,30 @@ struct LogsScreen: View {
     @State private var usageHistoryEvidenceByRequestId: [String: RequestHistoryItem] = [:]
     @State private var usageHistoryEvidenceList: [RequestHistoryItem] = []
     @State private var lastEvidenceRefreshAt: Date = .distantPast
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var showClearConfirmation = false
+    @State private var refreshFeedbackState: ToolbarActionFeedbackState = .idle
+    @State private var clearFeedbackState: ToolbarActionFeedbackState = .idle
+    @State private var logsEntrancePhase = 0
+
+    private enum ToolbarActionFeedbackState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private var feedbackPulseMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion, profile: motionProfile)
+    }
+
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion, profile: motionProfile)
+    }
+    
+    private var motionProfile: QuotioMotionProfile {
+        QuotioMotionProfile(rawValue: motionProfileRaw) ?? .default
+    }
     
     var body: some View {
         Group {
@@ -49,48 +72,65 @@ struct LogsScreen: View {
                     }
                     .pickerStyle(.segmented)
                     .padding()
+                    .opacity(layerOpacity(1))
+                    .offset(y: layerOffset(1))
                     
                     Divider()
                     
                     // Tab Content
-                    switch selectedTab {
-                    case .requests:
-                        requestHistoryView
-                    case .proxyLogs:
-                        proxyLogsView
+                    Group {
+                        switch selectedTab {
+                        case .requests:
+                            requestHistoryView
+                        case .proxyLogs:
+                            proxyLogsView
+                        }
                     }
+                    .id(selectedTab)
+                    .transition(logsTabTransition)
+                    .opacity(layerOpacity(3))
+                    .offset(y: layerOffset(3))
                 }
+                .motionAwareAnimation(QuotioMotion.pageEnter, value: selectedTab)
+                .motionAwareAnimation(QuotioMotion.pageExit, value: selectedTab)
             }
         }
         .navigationTitle("nav.logs".localized())
         .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+            TopFeedbackBanner(item: $feedback)
         }
         .searchable(text: $searchText, prompt: searchPrompt)
+        .confirmationDialog(
+            "logs.confirm.clear.title".localized(fallback: "确认清空日志"),
+            isPresented: $showClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("action.delete".localized(fallback: "删除"), role: .destructive) {
+                Task { await clearCurrentTabWithFeedback() }
+            }
+            Button("action.cancel".localized(fallback: "取消"), role: .cancel) {}
+        } message: {
+            Text(
+                selectedTab == .requests
+                ? "logs.confirm.clear.requests".localized(fallback: "将清空全部请求日志，此操作无法撤销。")
+                : "logs.confirm.clear.proxy".localized(fallback: "将清空全部代理日志，此操作无法撤销。")
+            )
+        }
         .toolbar {
             toolbarContent
+        }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: requestFilterProvider ?? "__all__")
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: requestSourceFilter ?? "__all__")
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: requestStatusFilter)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: fallbackOnly)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: proxyLogViewMode)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: String(describing: filterLevel))
+        .motionAwareAnimation(QuotioMotion.pageExit, value: requestFiltersTransitionKey)
+        .onAppear {
+            runLogsEntrance()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            runLogsEntrance()
         }
         .task {
             uiMetrics.mark("logs.screen.appear")
@@ -154,6 +194,9 @@ struct LogsScreen: View {
                 }
             }
         }
+        .id(requestHistoryContentStateID)
+        .transition(logsContentTransition)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: requestHistoryContentStateID)
     }
     
     private var requestStatsHeader: some View {
@@ -191,7 +234,7 @@ struct LogsScreen: View {
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 140)
+            .frame(minWidth: 112, idealWidth: 140, maxWidth: 180)
 
             Picker("logs.source".localized(fallback: "来源"), selection: $requestSourceFilter) {
                 Text("logs.all".localized(fallback: "全部")).tag(nil as String?)
@@ -201,7 +244,7 @@ struct LogsScreen: View {
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 130)
+            .frame(minWidth: 104, idealWidth: 130, maxWidth: 170)
 
             Picker("logs.status".localized(fallback: "状态"), selection: $requestStatusFilter) {
                 ForEach(RequestStatusFilter.allCases) { filter in
@@ -209,13 +252,16 @@ struct LogsScreen: View {
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 120)
+            .frame(minWidth: 96, idealWidth: 120, maxWidth: 160)
 
             Toggle("logs.fallbackOnly".localized(fallback: "仅看回退"), isOn: $fallbackOnly)
                 .toggleStyle(.switch)
         }
         .padding()
         .background(.regularMaterial)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: requestFiltersTransitionKey)
+        .opacity(layerOpacity(2))
+        .offset(y: layerOffset(2))
     }
     
     private var filteredRequests: [RequestLog] {
@@ -294,7 +340,7 @@ struct LogsScreen: View {
                 }
             } else {
                 ScrollViewReader { proxy in
-                    List(filteredRequests) { request in
+                    List(Array(filteredRequests.enumerated()), id: \.element.id) { index, request in
                         let evidence = usageEvidence(for: request)
                         let authState = authEvidence(for: request, usageEvidence: evidence)
                         RequestRow(
@@ -319,10 +365,12 @@ struct LogsScreen: View {
                             }
                         )
                         .id("\(request.id)-\(expandedTraces.contains(request.id))-\(expandedPayloads.contains(request.id))")
+                        .transition(logsRowTransition)
+                        .motionAwareAnimation(logsRowAnimation(index: index), value: requestFiltersTransitionKey)
                     }
                     .onChange(of: viewModel.requestTracker.requestHistory.count) { _, _ in
                         if autoScroll, let first = filteredRequests.first {
-                            withAnimation {
+                            withMotionAwareAnimation(QuotioMotion.contentSwap, reduceMotion: reduceMotion) {
                                 proxy.scrollTo(first.id, anchor: .top)
                             }
                         }
@@ -583,6 +631,9 @@ struct LogsScreen: View {
                 logList
             }
         }
+        .id(proxyLogsContentStateID)
+        .transition(logsContentTransition)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: proxyLogsContentStateID)
     }
     
     private var logList: some View {
@@ -596,7 +647,7 @@ struct LogsScreen: View {
             }
             .onChange(of: logsViewModel.logs.count) { _, _ in
                 if autoScroll, let last = filteredLogs.last {
-                    withAnimation {
+                    withMotionAwareAnimation(QuotioMotion.contentSwap, reduceMotion: reduceMotion) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
@@ -616,7 +667,7 @@ struct LogsScreen: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 160)
+                .frame(minWidth: 120, idealWidth: 160, maxWidth: 220)
 
                 Picker("logs.picker.filter".localized(fallback: "筛选"), selection: $filterLevel) {
                     Text("logs.all".localized()).tag(nil as LogEntry.LogLevel?)
@@ -635,21 +686,56 @@ struct LogsScreen: View {
             Button {
                 Task { await refreshCurrentTabWithFeedback() }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                ZStack {
+                    SmallProgressView()
+                        .opacity(refreshFeedbackState == .busy ? 1 : 0)
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.semanticSuccess)
+                        .scaleEffect((refreshFeedbackState == .success && !reduceMotion) ? 1.08 : 1)
+                        .opacity(refreshFeedbackState == .success ? 1 : 0)
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.semanticDanger)
+                        .scaleEffect((refreshFeedbackState == .failure && !reduceMotion) ? 1.06 : 1)
+                        .opacity(refreshFeedbackState == .failure ? 1 : 0)
+                    Image(systemName: "arrow.clockwise")
+                        .opacity(refreshFeedbackState == .idle ? 1 : 0)
+                }
+                .frame(width: 16, height: 16)
+                .motionAwareAnimation(feedbackPulseAnimation, value: refreshFeedbackState)
             }
+            .buttonStyle(.toolbarIcon)
             .accessibilityLabel("action.refresh".localized())
             .help("action.refresh".localized())
-            .disabled(selectedTab == .proxyLogs && logsViewModel.isRefreshing)
+            .disabled(refreshFeedbackState == .busy || (selectedTab == .proxyLogs && logsViewModel.isRefreshing))
             
             Button(role: .destructive) {
-                Task { await clearCurrentTabWithFeedback() }
+                showClearConfirmation = true
             } label: {
-                Image(systemName: "trash")
+                ZStack {
+                    SmallProgressView()
+                        .opacity(clearFeedbackState == .busy ? 1 : 0)
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.semanticSuccess)
+                        .scaleEffect((clearFeedbackState == .success && !reduceMotion) ? 1.08 : 1)
+                        .opacity(clearFeedbackState == .success ? 1 : 0)
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.semanticDanger)
+                        .scaleEffect((clearFeedbackState == .failure && !reduceMotion) ? 1.06 : 1)
+                        .opacity(clearFeedbackState == .failure ? 1 : 0)
+                    Image(systemName: "trash")
+                        .opacity(clearFeedbackState == .idle ? 1 : 0)
+                }
+                .frame(width: 16, height: 16)
+                .motionAwareAnimation(feedbackPulseAnimation, value: clearFeedbackState)
             }
+            .buttonStyle(.toolbarIcon)
             .accessibilityLabel("action.delete".localized())
             .help("action.delete".localized())
-            .disabled((selectedTab == .requests && viewModel.requestTracker.requestHistory.isEmpty) ||
-                (selectedTab == .proxyLogs && logsViewModel.logs.isEmpty))
+            .disabled(
+                clearFeedbackState == .busy ||
+                (selectedTab == .requests && viewModel.requestTracker.requestHistory.isEmpty) ||
+                (selectedTab == .proxyLogs && logsViewModel.logs.isEmpty)
+            )
 
             if selectedTab == .requests {
                 Button {
@@ -657,6 +743,7 @@ struct LogsScreen: View {
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
+                .buttonStyle(.toolbarIcon)
                 .help("logs.exportAudit".localized(fallback: "导出审计包"))
                 .accessibilityLabel("logs.exportAudit".localized(fallback: "导出审计包"))
             }
@@ -687,18 +774,24 @@ struct LogsScreen: View {
     }
 
     private func refreshCurrentTabWithFeedback() async {
+        await MainActor.run {
+            refreshFeedbackState = .busy
+        }
         if selectedTab == .requests {
             if featureFlags.enhancedObservability {
                 await refreshUsageHistoryEvidence()
                 await MainActor.run {
                     lastEvidenceRefreshAt = Date()
                     showFeedback("logs.feedback.requestsRefreshed".localized(fallback: "请求证据已刷新"))
+                    refreshFeedbackState = .success
                 }
             } else {
                 await MainActor.run {
                     showFeedback("logs.feedback.requestsAuto".localized(fallback: "请求日志由代理实时采集，无需手动刷新"))
+                    refreshFeedbackState = .success
                 }
             }
+            await clearToolbarFeedbackStateAfterDelay(for: .refresh)
             return
         }
 
@@ -709,34 +802,60 @@ struct LogsScreen: View {
                     "logs.feedback.refreshFailed".localized(fallback: "日志刷新失败") + ": " + error,
                     isError: true
                 )
+                refreshFeedbackState = .failure
                 return
             }
             showFeedback("logs.feedback.refreshed".localized(fallback: "日志已刷新"))
+            refreshFeedbackState = .success
         }
+        await clearToolbarFeedbackStateAfterDelay(for: .refresh)
     }
 
     private func clearCurrentTabWithFeedback() async {
+        await MainActor.run {
+            clearFeedbackState = .busy
+        }
         if selectedTab == .requests {
             let clearedCount = viewModel.requestTracker.requestHistory.count
             viewModel.requestTracker.clearHistory()
             await MainActor.run {
-                showFeedback(
-                    "logs.feedback.requestsCleared".localized(fallback: "请求日志已清空") + " (\(clearedCount))"
-                )
+                let feedback = LogsClearFeedbackResolver.requestsFeedback(clearedCount: clearedCount)
+                showFeedback(feedback.message, isError: feedback.isError)
+                clearFeedbackState = feedback.isError ? .failure : .success
             }
+            await clearToolbarFeedbackStateAfterDelay(for: .clear)
             return
         }
 
         await logsViewModel.clearLogs()
         await MainActor.run {
-            if let error = normalizedErrorMessage(logsViewModel.refreshError) {
-                showFeedback(
-                    "logs.feedback.clearFailed".localized(fallback: "日志清空失败") + ": " + error,
-                    isError: true
-                )
-                return
+            let feedback = LogsClearFeedbackResolver.proxyFeedback(
+                rawRefreshError: logsViewModel.refreshError
+            )
+            showFeedback(feedback.message, isError: feedback.isError)
+            clearFeedbackState = feedback.isError ? .failure : .success
+        }
+        await clearToolbarFeedbackStateAfterDelay(for: .clear)
+    }
+
+    private enum ToolbarFeedbackTarget {
+        case refresh
+        case clear
+    }
+
+    private func clearToolbarFeedbackStateAfterDelay(for target: ToolbarFeedbackTarget) async {
+        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+        await MainActor.run {
+            switch target {
+            case .refresh:
+                if refreshFeedbackState == .success || refreshFeedbackState == .failure {
+                    refreshFeedbackState = .idle
+                }
+            case .clear:
+                if clearFeedbackState == .success || clearFeedbackState == .failure {
+                    clearFeedbackState = .idle
+                }
             }
-            showFeedback("logs.feedback.cleared".localized(fallback: "代理日志已清空"))
         }
     }
 
@@ -748,21 +867,144 @@ struct LogsScreen: View {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(
+            TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion, profile: motionProfile),
+            reduceMotion: reduceMotion
+        ) {
+            feedback = item
         }
+    }
 
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
-            }
+    private var requestFiltersTransitionKey: String {
+        [
+            requestFilterProvider ?? "__all__",
+            requestSourceFilter ?? "__all__",
+            String(describing: requestStatusFilter),
+            fallbackOnly ? "fallback" : "all",
+            searchText
+        ].joined(separator: "|")
+    }
+
+    private var logsTabTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 8 : 12
+        let removalOffset: CGFloat = motionProfile == .crisp ? 6 : 10
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: insertionOffset)),
+            removal: .opacity.combined(with: .offset(x: -removalOffset))
+        )
+    }
+
+    private var logsContentTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 8 : 12
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: insertionOffset)),
+            removal: .opacity
+        )
+    }
+
+    private var requestHistoryContentStateID: String {
+        if viewModel.requestTracker.requestHistory.isEmpty {
+            return "requests-empty"
         }
+        if filteredRequests.isEmpty {
+            return "requests-filtered-empty-\(requestFiltersTransitionKey)"
+        }
+        return "requests-success-\(requestFiltersTransitionKey)"
+    }
+
+    private var proxyLogsContentStateID: String {
+        switch proxyLogsContentState {
+        case .loading:
+            return "proxy-loading"
+        case .error:
+            return "proxy-error"
+        case .empty:
+            return "proxy-empty-\(proxyLogsFilterTransitionKey)"
+        case .success:
+            return "proxy-success-\(proxyLogsFilterTransitionKey)"
+        }
+    }
+
+    private var logsRowTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 7 : 10
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: insertionOffset)),
+            removal: .opacity
+        )
+    }
+
+    private func runLogsEntrance() {
+        let contentSwapDelay: Double = motionProfile == .crisp ? 0.06 : 0.08
+        let springDelay: Double = motionProfile == .crisp ? 0.12 : 0.16
+        guard !reduceMotion else {
+            logsEntrancePhase = 3
+            return
+        }
+        logsEntrancePhase = 0
+        withMotionAwareAnimation(QuotioMotion.pageEnter, reduceMotion: reduceMotion) {
+            logsEntrancePhase = 1
+        }
+        withMotionAwareAnimation(QuotioMotion.contentSwap.delay(contentSwapDelay), reduceMotion: reduceMotion) {
+            logsEntrancePhase = 2
+        }
+        withMotionAwareAnimation(QuotioMotion.gentleSpring.delay(springDelay), reduceMotion: reduceMotion) {
+            logsEntrancePhase = 3
+        }
+    }
+
+    private func layerOpacity(_ phase: Int) -> Double {
+        reduceMotion || logsEntrancePhase >= phase ? 1 : 0
+    }
+
+    private func layerOffset(_ phase: Int) -> CGFloat {
+        guard !reduceMotion, logsEntrancePhase < phase else { return 0 }
+        let base: CGFloat = motionProfile == .crisp ? 7 : 9
+        let step: CGFloat = motionProfile == .crisp ? 1.5 : 2
+        return base + CGFloat(phase) * step
+    }
+
+    private func logsRowAnimation(index: Int) -> Animation? {
+        guard !reduceMotion else { return nil }
+        let step = motionProfile == .crisp ? 0.016 : 0.024
+        return QuotioMotion.contentSwap.delay(Double(min(index, 10)) * step)
+    }
+
+    private var proxyLogsFilterTransitionKey: String {
+        [
+            String(describing: filterLevel),
+            proxyLogViewMode.rawValue,
+            searchText
+        ].joined(separator: "|")
+    }
+}
+
+enum LogsClearFeedbackResolver {
+    static func requestsFeedback(clearedCount: Int) -> (message: String, isError: Bool) {
+        (
+            "logs.feedback.requestsCleared".localized(fallback: "请求日志已清空") + " (\(clearedCount))",
+            false
+        )
+    }
+
+    static func proxyFeedback(rawRefreshError: String?) -> (message: String, isError: Bool) {
+        if let error = normalizedErrorMessage(rawRefreshError) {
+            return (
+                "logs.feedback.clearFailed".localized(fallback: "日志清空失败") + ": " + error,
+                true
+            )
+        }
+        return ("logs.feedback.cleared".localized(fallback: "代理日志已清空"), false)
+    }
+
+    static func normalizedErrorMessage(_ message: String?) -> String? {
+        guard let text = message?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        return text
     }
 }
 

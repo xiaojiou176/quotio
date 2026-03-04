@@ -5,6 +5,17 @@
 
 import SwiftUI
 
+enum UsageStatsColumnWidth {
+    static let status: CGFloat = 28
+    static let timeMin: CGFloat = 60
+    static let timeIdeal: CGFloat = 76
+    static let modelMin: CGFloat = 104
+    static let accountMin: CGFloat = 92
+    static let sourceMin: CGFloat = 76
+    static let requestIdMin: CGFloat = 60
+    static let requestIdIdeal: CGFloat = 96
+}
+
 struct SummaryCard: View {
     let title: String
     let value: String
@@ -34,7 +45,45 @@ struct SummaryCard: View {
 struct RequestHistoryRow: View {
     let item: RequestHistoryItem
     var onFocus: (() -> Void)? = nil
-    @State private var copied = false
+    @State private var copyFeedbackState: CopyFeedbackState = .idle
+
+    private enum CopyFeedbackState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private var accessibilitySummary: String {
+        let status = item.success
+            ? "status.connected".localized(fallback: "成功")
+            : "status.error".localized(fallback: "失败")
+        let timeText = item.date.map { date in
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            formatter.dateStyle = .none
+            return formatter.string(from: date)
+        } ?? "usage.stats.header.time".localized(fallback: "时间未知")
+        let model = item.model ?? "logs.status.unknown".localized(fallback: "未知")
+        let source = item.source ?? "usage.stats.header.source".localized(fallback: "来源未知")
+        return "stats.requestRow.a11y.label".localized(
+            fallback: "请求 \(status)，时间 \(timeText)，模型 \(model)，来源 \(source)"
+        )
+    }
+
+    private var accessibilityDetail: String {
+        var parts: [String] = []
+        if let authIndex = item.authIndex, !authIndex.isEmpty {
+            parts.append("usage.stats.header.account".localized(fallback: "账号") + " \(authIndex)")
+        }
+        if let tokens = item.tokens {
+            parts.append("stats.requestRow.a11y.tokens".localized(fallback: "Token \(tokens)"))
+        }
+        if let requestId = item.requestId, !requestId.isEmpty {
+            parts.append("stats.requestRow.a11y.requestId".localized(fallback: "请求 ID \(requestId)"))
+        }
+        return parts.joined(separator: "，")
+    }
     
     var body: some View {
         HStack(spacing: 4) {
@@ -46,28 +95,40 @@ struct RequestHistoryRow: View {
                     Image(systemName: item.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(item.success ? Color.semanticSuccess : Color.semanticDanger)
+                        .frame(width: UsageStatsColumnWidth.status, alignment: .leading)
 
                     // Time
                     if let date = item.date {
                         Text(date, style: .time)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
-                            .frame(width: 60, alignment: .leading)
+                            .frame(
+                                minWidth: UsageStatsColumnWidth.timeMin,
+                                idealWidth: UsageStatsColumnWidth.timeIdeal,
+                                maxWidth: UsageStatsColumnWidth.timeIdeal,
+                                alignment: .leading
+                            )
                     }
 
                     // Model
                     Text(item.model ?? "logs.status.unknown".localized(fallback: "未知"))
                         .font(.caption)
-                        .lineLimit(1)
-                        .frame(width: 150, alignment: .leading)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: UsageStatsColumnWidth.modelMin, alignment: .leading)
+                        .layoutPriority(2)
 
                     // Account
                     if let authIndex = item.authIndex {
                         Text(authIndex)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(width: 120, alignment: .leading)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(minWidth: UsageStatsColumnWidth.accountMin, alignment: .leading)
+                            .layoutPriority(1)
                     }
 
                     // Source
@@ -75,8 +136,11 @@ struct RequestHistoryRow: View {
                         Text(source)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(width: 90, alignment: .leading)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(minWidth: UsageStatsColumnWidth.sourceMin, alignment: .leading)
+                            .layoutPriority(1)
                     }
 
                     Spacer()
@@ -92,39 +156,94 @@ struct RequestHistoryRow: View {
                         Text("#" + String((item.requestId ?? "").prefix(8)))
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundStyle(.tertiary)
-                            .frame(width: 76, alignment: .trailing)
+                            .frame(
+                                minWidth: UsageStatsColumnWidth.requestIdMin,
+                                idealWidth: UsageStatsColumnWidth.requestIdIdeal,
+                                maxWidth: UsageStatsColumnWidth.requestIdIdeal,
+                                alignment: .trailing
+                            )
                     }
                 }
             }
             .buttonStyle(.plain)
             .disabled(onFocus == nil)
             .help("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
-            .accessibilityLabel("stats.requestHistoryRow".localized(fallback: "请求历史行"))
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityValue(accessibilityDetail)
             .accessibilityHint("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
             .focusable(true)
+            .quotioHoverFeedback()
+            .motionAwareAnimation(QuotioMotion.press, value: onFocus == nil)
+            .motionAwareAnimation(QuotioMotion.contentSwap, value: item.success)
 
             if item.requestId != nil {
                 Button {
                     guard let requestId = item.requestId else { return }
+                    copyFeedbackState = .busy
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
-                    pasteboard.setString(requestId, forType: .string)
-                    copied = true
+                    if pasteboard.setString(requestId, forType: .string) {
+                        copyFeedbackState = .success
+                    } else {
+                        copyFeedbackState = .failure
+                    }
                     Task {
                         try? await Task.sleep(for: .seconds(1.2))
-                        copied = false
+                        copyFeedbackState = .idle
                     }
                 } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    Image(systemName: copyFeedbackIconName)
                         .font(.caption2)
-                        .foregroundStyle(copied ? Color.semanticSuccess : .secondary)
+                        .foregroundStyle(copyFeedbackTint)
+                        .scaleEffect(copyFeedbackState == .success ? 1.08 : 1)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.subtle)
                 .help("stats.requestId.copy.help".localized(fallback: "复制请求 ID"))
                 .accessibilityLabel("stats.requestId.copy".localized(fallback: "复制请求 ID"))
+                .accessibilityValue(copyAccessibilityValue)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: copyFeedbackState)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var copyFeedbackIconName: String {
+        switch copyFeedbackState {
+        case .idle:
+            return "doc.on.doc"
+        case .busy:
+            return "clock"
+        case .success:
+            return "checkmark"
+        case .failure:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var copyFeedbackTint: Color {
+        switch copyFeedbackState {
+        case .idle:
+            return .secondary
+        case .busy:
+            return Color.semanticInfo
+        case .success:
+            return Color.semanticSuccess
+        case .failure:
+            return Color.semanticDanger
+        }
+    }
+
+    private var copyAccessibilityValue: String {
+        switch copyFeedbackState {
+        case .idle:
+            return "status.idle".localized(fallback: "待复制")
+        case .busy:
+            return "status.loading".localized(fallback: "处理中")
+        case .success:
+            return "status.success".localized(fallback: "复制成功")
+        case .failure:
+            return "status.error".localized(fallback: "复制失败")
+        }
     }
 }
 
@@ -208,6 +327,28 @@ struct ModelStatsCard: View {
 struct SSEEventRow: View {
     let event: SSERequestEvent
     var onFocus: (() -> Void)? = nil
+
+    private var accessibilitySummary: String {
+        let model = event.model ?? "logs.status.unknown".localized(fallback: "未知")
+        let source = event.source ?? "usage.stats.header.source".localized(fallback: "来源未知")
+        let result = event.success == true
+            ? "status.connected".localized(fallback: "成功")
+            : "status.error".localized(fallback: "失败")
+        return "stats.realtimeRow.a11y.label".localized(
+            fallback: "实时事件 \(event.type)，结果 \(result)，模型 \(model)，来源 \(source)"
+        )
+    }
+
+    private var accessibilityDetail: String {
+        var parts: [String] = []
+        if let authFile = event.authFile {
+            parts.append("stats.realtimeRow.a11y.account".localized(fallback: "账号 \(authFile)"))
+        }
+        if let requestId = event.requestId, !requestId.isEmpty {
+            parts.append("stats.realtimeRow.a11y.requestId".localized(fallback: "请求 ID \(requestId)"))
+        }
+        return parts.joined(separator: "，")
+    }
     
     var body: some View {
         Button {
@@ -263,8 +404,12 @@ struct SSEEventRow: View {
         .buttonStyle(.plain)
         .disabled(onFocus == nil)
         .help("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
-        .accessibilityLabel("stats.realtimeEventRow".localized(fallback: "实时事件行"))
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityValue(accessibilityDetail)
         .accessibilityHint("stats.focusLog".localized(fallback: "点击在日志中聚焦此请求"))
+        .quotioHoverFeedback()
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: event.success)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: event.type)
     }
     
     private var eventIcon: String {

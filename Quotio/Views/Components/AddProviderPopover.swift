@@ -35,6 +35,9 @@ struct AddProviderPopover: View {
     @State private var selectedProvider: AIProvider?
     @State private var hasAttemptedSubmit = false
     @State private var hasAcknowledgedGeminiRisk = false
+    @State private var selectionPulse = false
+    @State private var blockedSubmitPulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let columns = [
         GridItem(.adaptive(minimum: 80), spacing: 12)
@@ -69,13 +72,13 @@ struct AddProviderPopover: View {
         if selectedProvider == nil {
             return AddProviderPopoverL10n.text(
                 "providers.addPopover.validation.selectProvider",
-                fallback: "Select one provider to continue."
+                fallback: "请选择一个提供商后继续。"
             )
         }
         if requiresGeminiRiskAcknowledgement && !hasAcknowledgedGeminiRisk {
             return AddProviderPopoverL10n.text(
                 "providers.addPopover.validation.geminiAcknowledge",
-                fallback: "Review Gemini coexist/overwrite risk and confirm before continuing."
+                fallback: "请先阅读 Gemini 共存/覆盖风险并确认后继续。"
             )
         }
         return nil
@@ -131,7 +134,7 @@ struct AddProviderPopover: View {
                     Text(
                         AddProviderPopoverL10n.text(
                             "providers.addPopover.gemini.confirmRisk",
-                            fallback: "I understand this Gemini credential may coexist with or overwrite an existing account entry."
+                            fallback: "我已了解该 Gemini 凭据可能与现有账号共存，或覆盖现有账号记录。"
                         )
                     )
                     .font(.caption)
@@ -158,7 +161,6 @@ struct AddProviderPopover: View {
                 }
             }
             .buttonStyle(.menuRow)
-            .focusEffectDisabled()
 
             // Add Custom Provider option
             Button {
@@ -176,7 +178,6 @@ struct AddProviderPopover: View {
                 }
             }
             .buttonStyle(.menuRow)
-            .focusEffectDisabled()
 
             Divider()
 
@@ -191,15 +192,22 @@ struct AddProviderPopover: View {
                 Button {
                     submitSelection()
                 } label: {
-                    Text(
-                        AddProviderPopoverL10n.text(
-                            "providers.addPopover.cta.continue",
-                            fallback: "Continue"
+                    HStack(spacing: 6) {
+                        Image(systemName: canSubmit ? "arrow.right.circle.fill" : "arrow.right.circle")
+                        Text(
+                            AddProviderPopoverL10n.text(
+                                "providers.addPopover.cta.continue",
+                                fallback: "继续"
+                            )
                         )
-                    )
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSubmit)
+                .buttonStyle(.borderedProminent)
+                .tint(selectedProvider?.color ?? Color.accentColor)
+                .scaleEffect(blockedSubmitPulse ? 0.985 : 1.0)
+                .motionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), value: blockedSubmitPulse)
             }
 
             if let submitDisabledReason {
@@ -209,11 +217,14 @@ struct AddProviderPopover: View {
                 )
                 .font(.caption2)
                 .foregroundStyle(hasAttemptedSubmit ? Color.semanticDanger : .secondary)
+                .transition(QuotioMotion.Transition.contentSwap(reduceMotion: reduceMotion))
             }
         }
         .padding(16)
         .frame(width: 360)
-        .focusEffectDisabled()
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: selectedProvider?.rawValue ?? "__none__")
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: hasAttemptedSubmit)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: hasAcknowledgedGeminiRisk)
     }
 
     @ViewBuilder
@@ -223,7 +234,7 @@ struct AddProviderPopover: View {
                 Label(
                     AddProviderPopoverL10n.format(
                         "providers.addPopover.selection.currentProvider",
-                        fallback: "Selected provider: %@",
+                        fallback: "已选提供商：%@",
                         selectedProvider.displayName.localized()
                     ),
                     systemImage: "checkmark.circle.fill"
@@ -235,7 +246,7 @@ struct AddProviderPopover: View {
                     Label(
                         AddProviderPopoverL10n.format(
                             "providers.addPopover.selection.existingAccountCount",
-                            fallback: "%@ already has %d account(s).",
+                            fallback: "%@ 已有 %d 个账号。",
                             selectedProvider.displayName.localized(),
                             selectedProviderExistingCount
                         ),
@@ -247,7 +258,7 @@ struct AddProviderPopover: View {
                     Text(
                         AddProviderPopoverL10n.text(
                             "providers.addPopover.selection.coexistOrOverwriteHint",
-                            fallback: "New credentials can coexist, but some gateway versions may treat duplicates as overwrite candidates."
+                            fallback: "新凭据可以共存，但部分网关版本会把重复条目视为覆盖候选。"
                         )
                     )
                     .font(.caption2)
@@ -269,7 +280,7 @@ struct AddProviderPopover: View {
                     Label(
                         AddProviderPopoverL10n.format(
                             "providers.addPopover.selection.readyToSubmit",
-                            fallback: "%@ is ready to be added.",
+                            fallback: "%@ 已准备好添加。",
                             selectedProvider.displayName.localized()
                         ),
                         systemImage: "checkmark.seal.fill"
@@ -281,7 +292,7 @@ struct AddProviderPopover: View {
                 Label(
                     AddProviderPopoverL10n.text(
                         "providers.addPopover.validation.selectProvider",
-                        fallback: "Select one provider to continue."
+                        fallback: "请选择一个提供商后继续。"
                     ),
                     systemImage: hasAttemptedSubmit ? "exclamationmark.triangle.fill" : "info.circle"
                 )
@@ -294,6 +305,8 @@ struct AddProviderPopover: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.primary.opacity(0.05))
         )
+        .scaleEffect(selectionPulse ? 1.01 : 1)
+        .motionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), value: selectionPulse)
     }
 
     private func selectProvider(_ provider: AIProvider) {
@@ -302,11 +315,28 @@ struct AddProviderPopover: View {
         }
         selectedProvider = provider
         hasAttemptedSubmit = false
+        blockedSubmitPulse = false
+        selectionPulse = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+            await MainActor.run {
+                selectionPulse = false
+            }
+        }
     }
 
     private func submitSelection() {
         hasAttemptedSubmit = true
-        guard canSubmit, let selectedProvider else { return }
+        guard canSubmit, let selectedProvider else {
+            blockedSubmitPulse = true
+            Task {
+                try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+                await MainActor.run {
+                    blockedSubmitPulse = false
+                }
+            }
+            return
+        }
         onSelectProvider(selectedProvider)
         onDismiss()
     }
@@ -369,14 +399,28 @@ private struct ProviderButton: View {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(isSelected ? provider.color.opacity(0.8) : Color.secondary.opacity(0.2), lineWidth: isSelected ? 1.5 : 1)
             )
+            .scaleEffect(isSelected ? (reduceMotion ? 1 : 1.02) : 1)
+            .motionAwareAnimation(QuotioMotion.successEmphasis, value: isSelected)
         }
         .buttonStyle(.gridItem(hoverColor: provider.color.opacity(0.1)))
-        .focusEffectDisabled()
         .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "providers.addPopover.providerButton.label".localizedFormat(
+                fallback: "%@，%d 个账号",
+                provider.displayName.localized(),
+                existingCount
+            )
+        )
+        .accessibilityValue(
+            isSelected
+                ? "providers.addPopover.providerButton.selected".localized(fallback: "已选中")
+                : "providers.addPopover.providerButton.notSelected".localized(fallback: "未选中")
+        )
     }
 }
 

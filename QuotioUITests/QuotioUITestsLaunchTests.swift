@@ -10,6 +10,7 @@ final class QuotioUITestsLaunchTests: XCTestCase {
     }
 
     @MainActor
+    // assertion-quality:allow-assertionless - XCTest measure() validates launch performance without XCTAssert.
     func testLaunchPerformance() throws {
         let app = XCUIApplication()
         app.launchEnvironment["QUOTIO_UI_TEST_MODE"] = "1"

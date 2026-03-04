@@ -7,6 +7,12 @@ import SwiftUI
 
 struct ModeSelectionStep: View {
     @Bindable var viewModel: OnboardingViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var continueFeedbackState: OnboardingSubmissionFeedbackState = .idle
+    
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion)
+    }
     
     var body: some View {
         VStack(spacing: 24) {
@@ -48,19 +54,44 @@ struct ModeSelectionStep: View {
                 viewModel.goBack()
             } label: {
                 Text("onboarding.button.back".localized())
-                    .frame(width: 100)
+                    .frame(minWidth: 96)
+                    .padding(.horizontal, 10)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
             
             Button {
                 viewModel.goNext()
+                guard !reduceMotion else {
+                    continueFeedbackState = .idle
+                    return
+                }
+                continueFeedbackState = .success
+                Task {
+                    try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+                    await MainActor.run {
+                        continueFeedbackState = .idle
+                    }
+                }
             } label: {
-                Text("onboarding.button.continue".localized())
-                    .frame(width: 140)
+                HStack(spacing: 8) {
+                    Text("onboarding.button.continue".localized())
+                    ZStack {
+                        Image(systemName: "arrow.right")
+                            .opacity(continueFeedbackState == .success ? 0 : 1)
+                        Image(systemName: "checkmark")
+                            .opacity(continueFeedbackState == .success ? 1 : 0)
+                            .foregroundStyle(Color.semanticSuccess)
+                    }
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(continueFeedbackState == .success && !reduceMotion ? 1.08 : 1.0)
+                }
+                .frame(minWidth: 128)
+                .padding(.horizontal, 14)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .motionAwareAnimation(feedbackPulseAnimation, value: continueFeedbackState)
         }
     }
 }
@@ -71,6 +102,9 @@ struct OperatingModeCard: View {
     let onSelect: () -> Void
     
     @State private var isHovered = false
+    @State private var selectionPulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isFocused: Bool
     
     var body: some View {
         Button(action: onSelect) {
@@ -104,6 +138,7 @@ struct OperatingModeCard: View {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
                     .foregroundStyle(isSelected ? Color.semanticInfo : .secondary.opacity(0.4))
+                    .scaleEffect(isSelected ? 1.08 : 1.0)
             }
             .padding(16)
             .background(backgroundView)
@@ -112,13 +147,38 @@ struct OperatingModeCard: View {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(borderColor, lineWidth: isSelected ? 2 : 1)
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor.opacity(0.55), lineWidth: isFocused ? 2 : 0)
+            )
             .scaleEffect(isHovered ? 1.01 : 1.0)
-            .motionAwareAnimation(.easeInOut(duration: 0.15), value: isHovered)
-            .motionAwareAnimation(.easeInOut(duration: 0.15), value: isSelected)
+            .scaleEffect(selectionPulse && !reduceMotion ? 1.01 : 1.0)
+            .motionAwareAnimation(QuotioMotion.hover, value: isHovered)
+            .motionAwareAnimation(QuotioMotion.successEmphasis, value: isSelected)
+            .motionAwareAnimation(QuotioMotion.contentSwap, value: isFocused)
+            .motionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), value: selectionPulse)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($isFocused)
         .onHover { isHovered = $0 }
+        .onChange(of: isSelected) { _, selected in
+            guard selected else {
+                selectionPulse = false
+                return
+            }
+            guard !reduceMotion else {
+                selectionPulse = false
+                return
+            }
+            selectionPulse = true
+            Task {
+                try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+                await MainActor.run {
+                    selectionPulse = false
+                }
+            }
+        }
     }
     
     private var iconView: some View {
@@ -145,6 +205,8 @@ struct OperatingModeCard: View {
     private var borderColor: Color {
         if isSelected {
             return Color.accentColor
+        } else if isFocused {
+            return Color.accentColor.opacity(0.7)
         } else if isHovered {
             return Color.secondary.opacity(0.5)
         } else {

@@ -399,6 +399,7 @@ extension QuotaViewModel {
     
     func pollOAuthStatus(state: String, provider: AIProvider) async {
         guard let client = apiClient else { return }
+        var lastPollingError: String?
         
         for _ in 0..<60 {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -415,14 +416,32 @@ extension QuotaViewModel {
                     oauthState = OAuthState(provider: provider, status: .error, error: response.error)
                     return
                 default:
+                    if let errorText = response.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !errorText.isEmpty {
+                        lastPollingError = errorText
+                        Log.warning("[OAuth] Polling intermediate error (\(provider.rawValue)): \(errorText)")
+                    }
                     continue
                 }
             } catch {
+                let errorText = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !errorText.isEmpty {
+                    lastPollingError = errorText
+                    Log.warning("[OAuth] Polling request failed (\(provider.rawValue)): \(errorText)")
+                }
                 continue
             }
         }
         
-        oauthState = OAuthState(provider: provider, status: .error, error: "OAuth timeout")
+        if let lastPollingError, !lastPollingError.isEmpty {
+            oauthState = OAuthState(
+                provider: provider,
+                status: .error,
+                error: "OAuth timeout: \(lastPollingError)"
+            )
+        } else {
+            oauthState = OAuthState(provider: provider, status: .error, error: "OAuth timeout")
+        }
     }
     
     func cancelOAuth() {
@@ -578,15 +597,17 @@ extension QuotaViewModel {
         }
     }
     
-    func updateAPIKey(old: String, new: String) async {
-        guard let client = apiClient else { return }
-        guard !new.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+    func updateAPIKey(old: String, new: String) async -> Bool {
+        guard let client = apiClient else { return false }
+        guard !new.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         
         do {
             try await client.updateAPIKey(old: old, new: new)
             await fetchAPIKeys()
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
     

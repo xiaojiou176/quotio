@@ -6,6 +6,31 @@
 import SwiftUI
 import AppKit
 
+private enum LogsColumnWidth {
+    static let requestTimeMin: CGFloat = 92
+    static let requestTimeIdeal: CGFloat = 120
+    static let providerMin: CGFloat = 126
+    static let providerIdeal: CGFloat = 180
+    static let tokensMin: CGFloat = 56
+    static let tokensIdeal: CGFloat = 70
+    static let durationMin: CGFloat = 48
+    static let durationIdeal: CGFloat = 60
+    static let requestIdMin: CGFloat = 48
+    static let requestIdIdeal: CGFloat = 60
+    static let logTimeMin: CGFloat = 56
+    static let logTimeIdeal: CGFloat = 70
+    static let structuredTimeMin: CGFloat = 92
+    static let structuredTimeIdeal: CGFloat = 120
+    static let sourceMin: CGFloat = 92
+    static let sourceIdeal: CGFloat = 135
+    static let methodMin: CGFloat = 34
+    static let methodIdeal: CGFloat = 44
+    static let statusMin: CGFloat = 32
+    static let statusIdeal: CGFloat = 38
+    static let durationBadgeMin: CGFloat = 44
+    static let durationBadgeIdeal: CGFloat = 58
+}
+
 extension LogsScreen {
     enum LogsTab: String, CaseIterable {
         case requests = "requests"
@@ -69,6 +94,7 @@ extension LogsScreen {
 }
 
 struct RequestRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: RequestLog
     let evidence: RequestHistoryItem?
     let authEvidence: AuthFile?
@@ -84,7 +110,12 @@ struct RequestRow: View {
                 Text(request.formattedTimestamp)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 120, alignment: .leading)
+                    .frame(
+                        minWidth: LogsColumnWidth.requestTimeMin,
+                        idealWidth: LogsColumnWidth.requestTimeIdeal,
+                        maxWidth: LogsColumnWidth.requestTimeIdeal,
+                        alignment: .leading
+                    )
 
                 // Status Badge
                 statusBadge
@@ -109,7 +140,7 @@ struct RequestRow: View {
                         Text(request.resolvedModel ?? "")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     } else {
                         // Normal display
                         if let provider = request.provider {
@@ -121,7 +152,7 @@ struct RequestRow: View {
                             Text(model)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
                     }
 
@@ -130,21 +161,21 @@ struct RequestRow: View {
                             Label(source, systemImage: "app.badge")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
 
                         if let account = request.accountHint ?? evidence?.authIndex {
                             Label(account, systemImage: "person.text.rectangle")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
 
                         if let kind = authEvidence?.normalizedErrorKind, !kind.isEmpty {
                             Label(kind, systemImage: "exclamationmark.bubble")
                                 .font(.caption2)
                                 .foregroundStyle(Color.semanticWarning)
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
                     }
 
@@ -166,7 +197,13 @@ struct RequestRow: View {
                             .foregroundStyle(Color.semanticDanger)
                     }
                 }
-                .frame(width: 180, alignment: .leading)
+                .frame(
+                    minWidth: LogsColumnWidth.providerMin,
+                    idealWidth: LogsColumnWidth.providerIdeal,
+                    maxWidth: LogsColumnWidth.providerIdeal,
+                    alignment: .leading
+                )
+                .layoutPriority(2)
 
                 // Tokens
                 if let tokens = request.formattedTokens {
@@ -177,19 +214,34 @@ struct RequestRow: View {
                             .font(.system(.caption, design: .monospaced))
                     }
                     .foregroundStyle(.secondary)
-                    .frame(width: 70, alignment: .trailing)
+                    .frame(
+                        minWidth: LogsColumnWidth.tokensMin,
+                        idealWidth: LogsColumnWidth.tokensIdeal,
+                        maxWidth: LogsColumnWidth.tokensIdeal,
+                        alignment: .trailing
+                    )
                 } else {
                     Text("-")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                        .frame(width: 70, alignment: .trailing)
+                        .frame(
+                            minWidth: LogsColumnWidth.tokensMin,
+                            idealWidth: LogsColumnWidth.tokensIdeal,
+                            maxWidth: LogsColumnWidth.tokensIdeal,
+                            alignment: .trailing
+                        )
                 }
 
                 // Duration
                 Text(request.formattedDuration)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .trailing)
+                    .frame(
+                        minWidth: LogsColumnWidth.durationMin,
+                        idealWidth: LogsColumnWidth.durationIdeal,
+                        maxWidth: LogsColumnWidth.durationIdeal,
+                        alignment: .trailing
+                    )
 
                 Spacer()
 
@@ -204,12 +256,26 @@ struct RequestRow: View {
                         .foregroundStyle(.secondary)
                 }
                 .font(.system(.caption2, design: .monospaced))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("logs.requestResponseBytes".localized(fallback: "请求与响应字节"))
+                .accessibilityValue(
+                    "logs.requestResponseBytes.value".localizedFormat(
+                        fallback: "请求 %@ 字节，响应 %@ 字节",
+                        request.requestSize.formatted(),
+                        request.responseSize.formatted()
+                    )
+                )
 
                 if let rid = request.shortRequestId ?? evidence?.requestId.map({ String($0.prefix(8)) }) {
                     Text("#" + rid)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.tertiary)
-                        .frame(width: 60, alignment: .trailing)
+                        .frame(
+                            minWidth: LogsColumnWidth.requestIdMin,
+                            idealWidth: LogsColumnWidth.requestIdIdeal,
+                            maxWidth: LogsColumnWidth.requestIdIdeal,
+                            alignment: .trailing
+                        )
                 }
             }
 
@@ -220,6 +286,7 @@ struct RequestRow: View {
                     HStack(spacing: 6) {
                         Image(systemName: isTraceExpanded ? "chevron.down" : "chevron.right")
                             .font(.caption2)
+                            .motionAwareAnimation(QuotioMotion.contentSwap, value: isTraceExpanded)
                         Text("logs.fallbackTrace".localized())
                             .font(.caption2)
                         Spacer()
@@ -269,6 +336,8 @@ struct RequestRow: View {
                     }
                     .padding(.leading, 24)
                     .padding(.top, 4)
+                    .quotioStateSwapTransition(reduceMotion: reduceMotion)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: isTraceExpanded)
                 }
             }
 
@@ -279,6 +348,7 @@ struct RequestRow: View {
                     HStack(spacing: 6) {
                         Image(systemName: isPayloadExpanded ? "chevron.down" : "chevron.right")
                             .font(.caption2)
+                            .motionAwareAnimation(QuotioMotion.contentSwap, value: isPayloadExpanded)
                         Text("logs.payloadEvidence".localized(fallback: "请求证据"))
                             .font(.caption2)
                         Spacer()
@@ -317,12 +387,30 @@ struct RequestRow: View {
                     }
                     .padding(.leading, 24)
                     .padding(.top, 4)
+                    .quotioStateSwapTransition(reduceMotion: reduceMotion)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: isPayloadExpanded)
                 }
             }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("logs.requestRow".localized(fallback: "请求日志行"))
+        .accessibilityValue(requestRowAccessibilityValue)
+    }
+
+    private var requestRowAccessibilityValue: String {
+        let statusText = statusDescription + " \(request.statusBadge)"
+        let modelText = request.resolvedModel ?? request.model ?? "logs.status.unknown".localized(fallback: "未知")
+        let sourceText = request.source ?? evidence?.source ?? "logs.status.unknown".localized(fallback: "未知")
+        let requestIDText = request.shortRequestId ?? evidence?.requestId.map { String($0.prefix(8)) } ?? "logs.status.unknown".localized(fallback: "未知")
+        return "logs.requestRow.summary".localizedFormat(
+            fallback: "状态 %@，模型 %@，来源 %@，耗时 %@，请求 ID %@",
+            statusText,
+            modelText,
+            sourceText,
+            request.formattedDuration,
+            requestIDText
+        )
     }
 
     private var statusBadge: some View {
@@ -337,6 +425,7 @@ struct RequestRow: View {
         .padding(.vertical, 4)
         .background(statusColor)
         .clipShape(RoundedRectangle(cornerRadius: 4))
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: request.statusCode ?? -1)
         .accessibilityLabel("logs.status".localized(fallback: "状态"))
         .accessibilityValue(statusDescription + " \(request.statusBadge)")
     }
@@ -421,7 +510,12 @@ struct LogRow: View {
             Text(entry.timestamp, style: .time)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 70, alignment: .leading)
+                .frame(
+                    minWidth: LogsColumnWidth.logTimeMin,
+                    idealWidth: LogsColumnWidth.logTimeIdeal,
+                    maxWidth: LogsColumnWidth.logTimeIdeal,
+                    alignment: .leading
+                )
             
             Text(entry.level.rawValue.uppercased())
                 .font(.system(.caption2, design: .monospaced, weight: .bold))
@@ -454,7 +548,12 @@ struct StructuredLogRow: View {
                 Text(entry.timestamp, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute().second())
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 120, alignment: .leading)
+                    .frame(
+                        minWidth: LogsColumnWidth.structuredTimeMin,
+                        idealWidth: LogsColumnWidth.structuredTimeIdeal,
+                        maxWidth: LogsColumnWidth.structuredTimeIdeal,
+                        alignment: .leading
+                    )
 
                 Text(entry.level.rawValue.uppercased())
                     .font(.system(.caption2, design: .monospaced, weight: .bold))
@@ -469,19 +568,30 @@ struct StructuredLogRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(width: 135, alignment: .leading)
+                    .frame(
+                        minWidth: LogsColumnWidth.sourceMin,
+                        idealWidth: LogsColumnWidth.sourceIdeal,
+                        maxWidth: LogsColumnWidth.sourceIdeal,
+                        alignment: .leading
+                    )
 
                 if let method = parsed.method {
                     Text(method)
                         .font(.system(.caption2, design: .monospaced, weight: .bold))
                         .foregroundStyle(method == "GET" ? Color.semanticInfo : Color.semanticAccentSecondary)
-                        .frame(width: 44, alignment: .leading)
+                        .frame(
+                            minWidth: LogsColumnWidth.methodMin,
+                            idealWidth: LogsColumnWidth.methodIdeal,
+                            maxWidth: LogsColumnWidth.methodIdeal,
+                            alignment: .leading
+                        )
                 }
 
                 Text(parsed.path)
                     .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.middle)
+                    .layoutPriority(1)
 
                 Spacer(minLength: 8)
 
@@ -489,14 +599,24 @@ struct StructuredLogRow: View {
                     Text(String(status))
                         .font(.system(.caption2, design: .monospaced, weight: .bold))
                         .foregroundStyle(status >= 500 ? Color.semanticDanger : (status >= 400 ? Color.semanticWarning : Color.semanticSuccess))
-                        .frame(width: 38, alignment: .trailing)
+                        .frame(
+                            minWidth: LogsColumnWidth.statusMin,
+                            idealWidth: LogsColumnWidth.statusIdeal,
+                            maxWidth: LogsColumnWidth.statusIdeal,
+                            alignment: .trailing
+                        )
                 }
 
                 if let duration = parsed.duration {
                     Text(duration)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.secondary)
-                        .frame(width: 58, alignment: .trailing)
+                        .frame(
+                            minWidth: LogsColumnWidth.durationBadgeMin,
+                            idealWidth: LogsColumnWidth.durationBadgeIdeal,
+                            maxWidth: LogsColumnWidth.durationBadgeIdeal,
+                            alignment: .trailing
+                        )
                 }
             }
 

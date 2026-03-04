@@ -153,10 +153,13 @@ struct ProviderChipWithAdd: View {
         )
         .foregroundStyle(provider.color)
         .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                 isHovering = hovering
             }
         }
+        .motionAwareAnimation(QuotioMotion.hover, value: isHovering)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: count)
+        .motionAwareAnimation(QuotioMotion.successEmphasis, value: count > 0)
     }
 }
 

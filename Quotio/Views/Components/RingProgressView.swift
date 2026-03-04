@@ -30,7 +30,7 @@ struct RingProgressView: View {
                 .trim(from: 0, to: clamped / 100)
                 .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .motionAwareAnimation(.smooth(duration: 0.3), value: clamped)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: clamped)
             
             // Optional center label
             if showLabel {

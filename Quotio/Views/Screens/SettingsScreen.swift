@@ -9,9 +9,17 @@ import UniformTypeIdentifiers
 
 struct SettingsScreen: View {
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modeManager = OperatingModeManager.shared
     @State private var showRestoreOriginalConfirmation = false
+    @State private var applyWorkaroundActionState: TroubleshootingActionState = .idle
+    @State private var applyWorkaroundResetTask: Task<Void, Never>?
     private let launchManager = LaunchAtLoginManager.shared
+
+    private enum TroubleshootingActionState: Equatable {
+        case idle
+        case success
+    }
     
     var body: some View {
         @Bindable var lang = LanguageManager.shared
@@ -55,13 +63,26 @@ struct SettingsScreen: View {
 
             // Troubleshooting
             Section {
-                Button("troubleshooting.applyWorkaround".localized()) {
+                Button {
                     CLIProxyManager.shared.applyBaseURLWorkaround()
+                    triggerApplyWorkaroundFeedback()
+                } label: {
+                    if applyWorkaroundActionState == .success {
+                        Label("status.connected".localized(fallback: "已应用"), systemImage: "checkmark.seal.fill")
+                    } else {
+                        Label("troubleshooting.applyWorkaround".localized(), systemImage: "wrench.and.screwdriver")
+                    }
                 }
+                .buttonStyle(MenuRowButtonStyle(hoverColor: Color.semanticInfo.opacity(0.14), cornerRadius: 8))
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: applyWorkaroundActionState)
+                .motionAwareAnimation(QuotioMotion.successEmphasis, value: applyWorkaroundActionState == .success)
 
-                Button("troubleshooting.restoreOriginal".localized()) {
+                Button {
                     showRestoreOriginalConfirmation = true
+                } label: {
+                    Label("troubleshooting.restoreOriginal".localized(), systemImage: "arrow.uturn.backward.circle")
                 }
+                .buttonStyle(MenuRowButtonStyle(hoverColor: Color.semanticDanger.opacity(0.12), cornerRadius: 8))
                 .foregroundStyle(Color.semanticDanger)
             } header: {
                 Label("troubleshooting.title".localized(), systemImage: "hammer.fill")
@@ -74,6 +95,9 @@ struct SettingsScreen: View {
 
             // UI experience and accessibility
             UIExperienceSection()
+
+            // Motion rhythm profile
+            MotionProfileSection()
             
             // Privacy
             PrivacySettingsSection()
@@ -127,6 +151,25 @@ struct SettingsScreen: View {
         .onAppear {
             Log.debug("[SettingsScreen] View appeared - mode: \(modeManager.currentMode.rawValue), proxy running: \(viewModel.proxyManager.proxyStatus.running)")
         }
+        .onDisappear {
+            applyWorkaroundResetTask?.cancel()
+        }
+    }
+
+    private func triggerApplyWorkaroundFeedback() {
+        applyWorkaroundResetTask?.cancel()
+        withMotionAwareAnimation(QuotioMotion.successEmphasis, reduceMotion: reduceMotion) {
+            applyWorkaroundActionState = .success
+        }
+
+        applyWorkaroundResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 3))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withMotionAwareAnimation(QuotioMotion.dismiss, reduceMotion: reduceMotion) {
+                    applyWorkaroundActionState = .idle
+                }
+            }
+        }
     }
 }
-

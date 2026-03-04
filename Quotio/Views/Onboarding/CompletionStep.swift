@@ -7,7 +7,14 @@ import SwiftUI
 
 struct CompletionStep: View {
     @Bindable var viewModel: OnboardingViewModel
-    let onComplete: () -> Void
+    let onComplete: () async -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var successPulse = false
+    @State private var submitFeedbackState: OnboardingSubmissionFeedbackState = .idle
+    
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion)
+    }
     
     var body: some View {
         VStack(spacing: 32) {
@@ -33,20 +40,86 @@ struct CompletionStep: View {
             
             VStack(spacing: 12) {
                 Button {
-                    onComplete()
+                    Task {
+                        submitFeedbackState = .busy
+                        await onComplete()
+                        await MainActor.run {
+                            submitFeedbackState = viewModel.completionErrorMessage == nil ? .success : .failure
+                        }
+                        guard !reduceMotion else { return }
+                        try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+                        await MainActor.run {
+                            if submitFeedbackState != .busy {
+                                submitFeedbackState = .idle
+                            }
+                        }
+                    }
                 } label: {
-                    Text("onboarding.button.openDashboard".localized())
-                        .frame(width: 200)
+                    HStack(spacing: 8) {
+                        ZStack {
+                            if viewModel.isCompleting || submitFeedbackState == .busy {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else if submitFeedbackState == .failure {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Color.semanticDanger)
+                            } else if submitFeedbackState == .success {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.semanticSuccess)
+                            } else {
+                                Image(systemName: "arrow.right.circle")
+                            }
+                        }
+                        .frame(width: 14, height: 14)
+
+                        Text(
+                            viewModel.isCompleting || submitFeedbackState == .busy
+                            ? "onboarding.completion.verifying".localized(fallback: "正在验证连接…")
+                            : "onboarding.button.openDashboard".localized()
+                        )
+                    }
+                    .frame(minWidth: 180)
+                    .padding(.horizontal, 20)
+                    .scaleEffect(submitFeedbackState == .success && !reduceMotion ? 1.02 : 1.0)
+                    .opacity(submitFeedbackState == .failure ? 0.96 : 1.0)
                 }
+                .disabled(viewModel.isCompleting)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                
-                Text("onboarding.completion.hint".localized())
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                .motionAwareAnimation(feedbackPulseAnimation, value: submitFeedbackState)
+
+                if let completionError = viewModel.completionErrorMessage, !completionError.isEmpty {
+                    Label(completionError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.semanticDanger)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 400)
+                        .transition(.opacity.combined(with: .offset(y: 6)))
+                } else {
+                    HStack(spacing: 6) {
+                        if submitFeedbackState == .success {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.semanticSuccess)
+                        }
+                        Text("onboarding.completion.hint".localized())
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+                }
             }
         }
         .padding(32)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: viewModel.isCompleting)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: viewModel.completionErrorMessage)
+        .motionAwareAnimation(feedbackPulseAnimation, value: submitFeedbackState)
+        .onAppear {
+            guard !reduceMotion else {
+                successPulse = false
+                return
+            }
+            successPulse = true
+        }
     }
     
     private var successIcon: some View {
@@ -54,6 +127,9 @@ struct CompletionStep: View {
             Circle()
                 .fill(Color.semanticSuccess.opacity(0.15))
                 .frame(width: 80, height: 80)
+                .scaleEffect(successPulse ? 1.04 : 1.0)
+                .opacity(successPulse ? 1.0 : 0.85)
+                .motionAwareAnimation(QuotioMotion.contentSwap.repeatForever(autoreverses: true), value: successPulse)
             
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
@@ -89,5 +165,7 @@ struct CompletionStep: View {
 }
 
 #Preview {
-    CompletionStep(viewModel: OnboardingViewModel()) {}
+    CompletionStep(viewModel: OnboardingViewModel()) {
+        await Task.yield()
+    }
 }

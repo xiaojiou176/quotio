@@ -3,25 +3,32 @@
 //  Quotio
 //
 //  Custom button styles for consistent focus ring handling across the app.
-//  These styles provide subtle or no focus rings while maintaining accessibility.
+//  Focus ring is visible by default for keyboard accessibility.
 //
 
 import Foundation
 import SwiftUI
 
-private enum FocusRingPolicy {
-    static var disableFocusEffect: Bool {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: "ui.visibleFocusRingEnabled") == nil {
-            return false
+private enum ButtonFeedbackToken {
+    static let disabledOpacity: Double = 0.5
+    static let disabledSaturation: Double = 0.7
+}
+
+enum FocusRingPolicy {
+    static let visibilityPreferenceKey = "ui.visibleFocusRingEnabled"
+    static let defaultVisibleFocusRing = true
+
+    static func disableFocusEffect(using defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: visibilityPreferenceKey) == nil {
+            return !defaultVisibleFocusRing
         }
-        return !defaults.bool(forKey: "ui.visibleFocusRingEnabled")
+        return !defaults.bool(forKey: visibilityPreferenceKey)
     }
 }
 
 // MARK: - Subtle Button Style
 
-/// A button style with no default focus ring, suitable for icon buttons and inline actions.
+/// A button style with visible focus ring by default, suitable for icon buttons and inline actions.
 /// Use this for: trash buttons, toggle buttons, small action buttons.
 struct SubtleButtonStyle: ButtonStyle {
     var hoverColor: Color = .primary.opacity(0.1)
@@ -29,36 +36,100 @@ struct SubtleButtonStyle: ButtonStyle {
     var cornerRadius: CGFloat = 6
     
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(configuration.isPressed ? pressedOpacity : 1.0)
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(configuration.isPressed ? hoverColor : .clear)
-            )
-            .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
+        SubtleButtonContent(
+            configuration: configuration,
+            hoverColor: hoverColor,
+            pressedOpacity: pressedOpacity,
+            cornerRadius: cornerRadius
+        )
+    }
+
+    private struct SubtleButtonContent: View {
+        let configuration: Configuration
+        let hoverColor: Color
+        let pressedOpacity: Double
+        let cornerRadius: CGFloat
+
+        @State private var isHovered = false
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .quotioPressFeedback(isPressed: isEnabled && configuration.isPressed, pressedOpacity: pressedOpacity)
+                .background(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(isEnabled ? (configuration.isPressed ? hoverColor.opacity(1.25) : (isHovered ? hoverColor : .clear)) : .clear)
+                )
+                .saturation(isEnabled ? 1 : ButtonFeedbackToken.disabledSaturation)
+                .opacity(isEnabled ? 1 : ButtonFeedbackToken.disabledOpacity)
+                .onHover { hovering in
+                    guard isEnabled else { return }
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                        isHovered = hovering
+                    }
+                }
+                .motionAwareAnimation(QuotioMotion.press, value: configuration.isPressed)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isEnabled)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect())
+        }
     }
 }
 
 // MARK: - Row Action Button Style
 
 /// A button style for action buttons within list rows (like delete, edit, toggle).
-/// No focus ring, subtle press feedback.
+/// Visible focus ring by default, subtle press feedback.
 struct RowActionButtonStyle: ButtonStyle {
     var foregroundColor: Color = .primary
     var pressedOpacity: Double = 0.5
     
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(foregroundColor)
-            .opacity(configuration.isPressed ? pressedOpacity : 1.0)
-            .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
+        RowActionButtonContent(
+            configuration: configuration,
+            foregroundColor: foregroundColor,
+            pressedOpacity: pressedOpacity
+        )
+    }
+
+    private struct RowActionButtonContent: View {
+        let configuration: Configuration
+        let foregroundColor: Color
+        let pressedOpacity: Double
+
+        @State private var isHovered = false
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(isEnabled ? foregroundColor : .secondary)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .quotioPressFeedback(isPressed: isEnabled && configuration.isPressed, pressedOpacity: pressedOpacity)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isEnabled ? (configuration.isPressed ? foregroundColor.opacity(0.18) : (isHovered ? foregroundColor.opacity(0.1) : .clear)) : .clear)
+                )
+                .saturation(isEnabled ? 1 : ButtonFeedbackToken.disabledSaturation)
+                .opacity(isEnabled ? 1 : ButtonFeedbackToken.disabledOpacity)
+                .onHover { hovering in
+                    guard isEnabled else { return }
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                        isHovered = hovering
+                    }
+                }
+                .motionAwareAnimation(QuotioMotion.press, value: configuration.isPressed)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isEnabled)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect())
+        }
     }
 }
 
 // MARK: - Menu Row Button Style
 
 /// A button style for menu-like row buttons (like in popovers).
-/// Shows hover background, no focus ring.
+/// Shows hover background while preserving visible focus ring by default.
 struct MenuRowButtonStyle: ButtonStyle {
     var hoverColor: Color = .primary.opacity(0.08)
     var cornerRadius: CGFloat = 6
@@ -80,21 +151,28 @@ struct MenuRowButtonStyle: ButtonStyle {
         
         @State private var isHovered = false
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
         
         var body: some View {
             configuration.label
                 .padding(.vertical, 6)
                 .padding(.horizontal, 8)
+                .quotioPressFeedback(isPressed: isEnabled && configuration.isPressed)
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(configuration.isPressed ? hoverColor.opacity(1.5) : (isHovered ? hoverColor : .clear))
+                        .fill(isEnabled ? (configuration.isPressed ? hoverColor.opacity(1.5) : (isHovered ? hoverColor : .clear)) : .clear)
                 )
+                .saturation(isEnabled ? 1 : ButtonFeedbackToken.disabledSaturation)
+                .opacity(isEnabled ? 1 : ButtonFeedbackToken.disabledOpacity)
                 .onHover { hovering in
-                    withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+                    guard isEnabled else { return }
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                         isHovered = hovering
                     }
                 }
-                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
+                .motionAwareAnimation(QuotioMotion.press, value: configuration.isPressed)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isEnabled)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect())
         }
     }
 }
@@ -122,19 +200,26 @@ struct GridItemButtonStyle: ButtonStyle {
         
         @State private var isHovered = false
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
         
         var body: some View {
             configuration.label
+                .quotioPressFeedback(isPressed: isEnabled && configuration.isPressed)
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(configuration.isPressed ? hoverColor.opacity(1.5) : (isHovered ? hoverColor : .clear))
+                        .fill(isEnabled ? (configuration.isPressed ? hoverColor.opacity(1.5) : (isHovered ? hoverColor : .clear)) : .clear)
                 )
+                .saturation(isEnabled ? 1 : ButtonFeedbackToken.disabledSaturation)
+                .opacity(isEnabled ? 1 : ButtonFeedbackToken.disabledOpacity)
                 .onHover { hovering in
-                    withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+                    guard isEnabled else { return }
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                         isHovered = hovering
                     }
                 }
-                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
+                .motionAwareAnimation(QuotioMotion.press, value: configuration.isPressed)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isEnabled)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect())
         }
     }
 }
@@ -142,7 +227,7 @@ struct GridItemButtonStyle: ButtonStyle {
 // MARK: - Toolbar Icon Button Style
 
 /// A button style for toolbar icon buttons.
-/// Subtle hover effect, no focus ring.
+/// Subtle hover effect with visible focus ring by default.
 struct ToolbarIconButtonStyle: ButtonStyle {
     var size: CGFloat = 28
     var cornerRadius: CGFloat = 6
@@ -162,20 +247,30 @@ struct ToolbarIconButtonStyle: ButtonStyle {
         
         @State private var isHovered = false
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
         
         var body: some View {
             configuration.label
                 .frame(width: size, height: size)
+                .quotioPressFeedback(
+                    isPressed: isEnabled && configuration.isPressed,
+                    pressedOpacity: 0.85
+                )
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(configuration.isPressed ? Color.primary.opacity(0.15) : (isHovered ? Color.primary.opacity(0.08) : .clear))
+                        .fill(isEnabled ? (configuration.isPressed ? Color.primary.opacity(0.15) : (isHovered ? Color.primary.opacity(0.08) : .clear)) : .clear)
                 )
+                .saturation(isEnabled ? 1 : ButtonFeedbackToken.disabledSaturation)
+                .opacity(isEnabled ? 1 : ButtonFeedbackToken.disabledOpacity)
                 .onHover { hovering in
-                    withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+                    guard isEnabled else { return }
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                         isHovered = hovering
                     }
                 }
-                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
+                .motionAwareAnimation(QuotioMotion.press, value: configuration.isPressed)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isEnabled)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect())
         }
     }
 }
@@ -183,19 +278,31 @@ struct ToolbarIconButtonStyle: ButtonStyle {
 // MARK: - Section Header Button Style
 
 /// A button style for buttons in section headers (like refresh, add).
-/// Minimal styling, no focus ring.
+/// Minimal styling with visible focus ring by default.
 struct SectionHeaderButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(configuration.isPressed ? 0.5 : 1.0)
-            .focusEffectDisabled(FocusRingPolicy.disableFocusEffect)
+        SectionHeaderButtonContent(configuration: configuration)
+    }
+
+    private struct SectionHeaderButtonContent: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .quotioPressFeedback(isPressed: isEnabled && configuration.isPressed, pressedOpacity: 0.7)
+                .saturation(isEnabled ? 1 : ButtonFeedbackToken.disabledSaturation)
+                .opacity(isEnabled ? 1 : ButtonFeedbackToken.disabledOpacity)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isEnabled)
+                .focusEffectDisabled(FocusRingPolicy.disableFocusEffect())
+        }
     }
 }
 
 // MARK: - Extensions for Convenience
 
 extension ButtonStyle where Self == SubtleButtonStyle {
-    /// A button style with no focus ring for icon/action buttons.
+    /// A button style for icon/action buttons with visible focus ring by default.
     static var subtle: SubtleButtonStyle { SubtleButtonStyle() }
 }
 

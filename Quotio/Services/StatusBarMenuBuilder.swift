@@ -522,8 +522,11 @@ private struct MenuNetworkInfoView: View {
     private var tunnelURL: String? { tunnelManager.tunnelState.publicURL }
     private var proxyURL: String { "http://127.0.0.1:" + port }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var didCopyProxy = false
     @State private var didCopyTunnel = false
+    @State private var isProxyToggleHovered = false
+    @State private var isTunnelToggleHovered = false
 
     private enum CopyTarget {
         case proxy
@@ -564,8 +567,22 @@ private struct MenuNetworkInfoView: View {
                     Image(systemName: isProxyRunning ? "stop.fill" : "play.fill")
                         .font(.system(size: 9))
                         .foregroundStyle(isProxyRunning ? Color.semanticDanger : Color.semanticSuccess)
+                        .padding(5)
+                        .background(
+                            Circle()
+                                .fill(isProxyToggleHovered ? Color.secondary.opacity(0.12) : Color.clear)
+                        )
+                        .scaleEffect(isProxyToggleHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isProxyRunning ? "action.stop".localized(fallback: "停止代理") : "action.start".localized(fallback: "启动代理"))
+                .help(isProxyRunning ? "action.stop".localized(fallback: "停止代理") : "action.start".localized(fallback: "启动代理"))
+                .motionAwareAnimation(QuotioMotion.hover, value: isProxyToggleHovered)
+                .onHover { hovering in
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                        isProxyToggleHovered = hovering
+                    }
+                }
             }
 
             // Tunnel Row (only show when proxy is running)
@@ -605,9 +622,23 @@ private struct MenuNetworkInfoView: View {
                         Image(systemName: tunnelStatus == .active || tunnelStatus == .starting ? "stop.fill" : "play.fill")
                             .font(.system(size: 9))
                             .foregroundStyle(tunnelStatus == .active ? Color.semanticDanger : Color.semanticInfo)
+                            .padding(5)
+                            .background(
+                                Circle()
+                                    .fill(isTunnelToggleHovered ? Color.secondary.opacity(0.12) : Color.clear)
+                            )
+                            .scaleEffect(isTunnelToggleHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
                     }
                     .buttonStyle(.plain)
                     .disabled(tunnelStatus == .starting || tunnelStatus == .stopping)
+                    .accessibilityLabel(tunnelStatus == .active ? "tunnel.action.stop".localized() : "tunnel.action.start".localized())
+                    .help(tunnelStatus == .active ? "tunnel.action.stop".localized() : "tunnel.action.start".localized())
+                    .motionAwareAnimation(QuotioMotion.hover, value: isTunnelToggleHovered)
+                    .onHover { hovering in
+                        withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                            isTunnelToggleHovered = hovering
+                        }
+                    }
                 }
             }
         }
@@ -622,7 +653,7 @@ private struct MenuNetworkInfoView: View {
         setCopied(target, value: true)
 
         Task {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 6))
             await MainActor.run {
                 setCopied(target, value: false)
             }
@@ -630,7 +661,7 @@ private struct MenuNetworkInfoView: View {
     }
 
     private func setCopied(_ target: CopyTarget, value: Bool) {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withMotionAwareAnimation(QuotioMotion.contentSwap, reduceMotion: reduceMotion) {
             switch target {
             case .proxy:
                 didCopyProxy = value
@@ -647,10 +678,12 @@ private struct MenuNetworkInfoView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(isCopied ? Color.semanticSuccess : .secondary)
                 .scaleEffect(isCopied ? 1.05 : 1)
-                .animation(.easeInOut(duration: 0.2), value: isCopied)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isCopied)
+                .padding(4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SubtleButtonStyle(hoverColor: Color.secondary.opacity(0.12), pressedOpacity: 0.75, cornerRadius: 8))
         .help(helpText)
+        .accessibilityLabel(helpText)
     }
 }
 
@@ -665,6 +698,7 @@ private struct MenuAccountCardView: View {
     let onUseAccount: (() -> Void)?
     
     private var settings: MenuBarSettingsManager { MenuBarSettingsManager.shared }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var isUseHovered = false
     @State private var isUsingAccount = false
@@ -831,7 +865,7 @@ private struct MenuAccountCardView: View {
                     isUsingAccount = true
                     Task { @MainActor in
                         onUse()
-                        try? await Task.sleep(nanoseconds: 650_000_000)
+                        try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 3))
                         isUsingAccount = false
                     }
                 } label: {
@@ -1330,6 +1364,7 @@ private struct MenuViewMoreAccountsView: View {
     let isExpanded: Bool
     let onToggle: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     var body: some View {
@@ -1339,7 +1374,7 @@ private struct MenuViewMoreAccountsView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
+                    .motionAwareAnimation(QuotioMotion.gentleSpring, value: isExpanded)
 
                 Text(isExpanded ? "menubar.hideAccounts".localized() : "menubar.viewMoreAccounts".localized())
                     .font(.system(size: 12, weight: .medium))
@@ -1353,7 +1388,7 @@ private struct MenuViewMoreAccountsView: View {
                         .background(Color.secondary.opacity(0.08))
                         .clipShape(Capsule())
                         .opacity(isExpanded ? 0 : 1)
-                        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+                        .motionAwareAnimation(QuotioMotion.contentSwap, value: isExpanded)
                 }
 
                 Spacer()
@@ -1439,8 +1474,6 @@ private struct MenuBarActionButton: View {
     var isLoading: Bool = false
     let action: () -> Void
     
-    @State private var isHovered = false
-    
     var body: some View {
         Button(action: action) {
             HStack {
@@ -1457,14 +1490,11 @@ private struct MenuBarActionButton: View {
                     SmallProgressView(size: 12)
                 }
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(isHovered ? Color.secondary.opacity(0.1) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MenuRowButtonStyle(hoverColor: Color.secondary.opacity(0.1), cornerRadius: 8))
         .disabled(isLoading)
-        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+        .help(title)
     }
 }

@@ -20,14 +20,60 @@ import AppKit
 /// the "maximum length that doesn't satisfy min <= max" constraint error.
 struct SmallProgressView: View {
     let size: CGFloat
+    let accessibilityLabel: String
+    let accessibilityValue: String
+    let accessibilityHint: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulseLoading = false
+    @State private var haloOpacity = 0.14
     
-    init(size: CGFloat = 16) {
+    init(
+        size: CGFloat = 16,
+        accessibilityLabel: String = "common.loading".localized(fallback: "加载中"),
+        accessibilityValue: String = "common.loading.inProgress".localized(fallback: "进行中"),
+        accessibilityHint: String = "common.loading.waitHint".localized(fallback: "请稍候")
+    ) {
         self.size = size
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityValue = accessibilityValue
+        self.accessibilityHint = accessibilityHint
     }
     
     var body: some View {
-        SmallProgressIndicator()
+        Group {
+            if reduceMotion {
+                ReducedMotionProgressGlyph()
+            } else {
+                ZStack {
+                    Circle()
+                        .strokeBorder(.secondary.opacity(haloOpacity), lineWidth: 1)
+                        .scaleEffect(pulseLoading ? 1 : 0.88)
+                    SmallProgressIndicator()
+                        .scaleEffect(pulseLoading ? 1 : 0.94)
+                        .opacity(pulseLoading ? 1 : 0.72)
+                }
+                .onAppear {
+                    withMotionAwareAnimation(
+                        QuotioMotion.contentSwap.repeatForever(autoreverses: true),
+                        reduceMotion: reduceMotion
+                    ) {
+                        pulseLoading = true
+                        haloOpacity = 0.26
+                    }
+                }
+                .onDisappear {
+                    pulseLoading = false
+                    haloOpacity = 0.14
+                }
+            }
+        }
+            .motionAwareAnimation(QuotioMotion.contentSwap, value: reduceMotion)
             .frame(width: size, height: size)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityValue(accessibilityValue)
+            .accessibilityHint(accessibilityHint)
+            .accessibilityAddTraits(.updatesFrequently)
     }
 }
 
@@ -61,6 +107,19 @@ private struct SmallProgressIndicator: NSViewRepresentable {
                 indicator.startAnimation(nil)
             }
         }
+    }
+}
+
+private struct ReducedMotionProgressGlyph: View {
+    var body: some View {
+        Circle()
+            .strokeBorder(.tertiary, lineWidth: 2)
+            .overlay(
+                Circle()
+                    .trim(from: 0.12, to: 0.58)
+                    .stroke(.secondary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-55))
+            )
     }
 }
 

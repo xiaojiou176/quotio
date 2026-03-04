@@ -8,7 +8,9 @@ import UniformTypeIdentifiers
 
 struct DashboardScreen: View {
     @Environment(QuotaViewModel.self) var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hideGettingStarted") private var hideGettingStarted: Bool = false
+    @AppStorage(QuotioMotionProfileStorage.key) private var motionProfileRaw = QuotioMotionProfile.default.rawValue
     @State var modeManager = OperatingModeManager.shared
 
     @State private var selectedProvider: AIProvider?
@@ -17,11 +19,31 @@ struct DashboardScreen: View {
     @State private var selectedAgentForConfig: CLIAgent?
     @State private var sheetPresentationID = UUID()
     @State private var showTunnelSheet = false
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var dashboardEntrancePhase = 0
+    @State private var toolbarRefreshFeedbackState: ToolbarActionFeedbackState = .idle
+    @State private var quotaRefreshFeedbackState: ToolbarActionFeedbackState = .idle
+    @State private var installFeedbackState: ToolbarActionFeedbackState = .idle
     
     private var tunnelManager: TunnelManager { TunnelManager.shared }
+    private var motionProfile: QuotioMotionProfile {
+        QuotioMotionProfile(rawValue: motionProfileRaw) ?? .default
+    }
+
+    private enum ToolbarActionFeedbackState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private var feedbackPulseMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion, profile: motionProfile)
+    }
+
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion, profile: motionProfile)
+    }
     
     private var showGettingStarted: Bool {
         guard !hideGettingStarted else { return false }
@@ -42,6 +64,14 @@ struct DashboardScreen: View {
             return true // Always show content in quota-only mode
         }
         return viewModel.proxyManager.proxyStatus.running
+    }
+
+    private var dashboardContentStateID: String {
+        if modeManager.isRemoteProxyMode { return "remote" }
+        if modeManager.isMonitorMode { return "monitor" }
+        if !viewModel.proxyManager.isBinaryInstalled { return "install" }
+        if !viewModel.proxyManager.proxyStatus.running { return "start" }
+        return "full"
     }
     
     // MARK: - Precomputed Properties (performance optimization)
@@ -101,46 +131,52 @@ struct DashboardScreen: View {
                 if modeManager.isRemoteProxyMode {
                     // Remote Mode: Show remote connection status and data
                     remoteModeContent
+                        .id("remote")
+                        .transition(dashboardStateTransition)
+                        .opacity(layerOpacity(2))
+                        .offset(y: layerOffset(2))
                 } else if modeManager.isLocalProxyMode {
                     // Full Mode: Check binary and proxy status
                     if !viewModel.proxyManager.isBinaryInstalled {
                         installBinarySection
+                            .id("install")
+                            .transition(dashboardStateTransition)
                     } else if !viewModel.proxyManager.proxyStatus.running {
                         startProxySection
+                            .id("start")
+                            .transition(dashboardStateTransition)
                     } else {
                         fullModeContent
+                            .id("full")
+                            .transition(dashboardStateTransition)
                     }
                 } else {
                     // Quota-Only Mode: Show quota dashboard
                     quotaOnlyModeContent
+                        .id("monitor")
+                        .transition(dashboardStateTransition)
                 }
             }
+            .id(dashboardContentStateID)
             .padding(24)
         }
+        .motionAwareAnimation(QuotioMotion.pageEnter, value: dashboardContentStateID)
+        .motionAwareAnimation(QuotioMotion.pageExit, value: dashboardContentStateID)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: viewModel.providerQuotas.isEmpty)
         .navigationTitle("nav.dashboard".localized())
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task {
-                        let previousError = normalizedErrorMessage(viewModel.errorMessage)
-                        if modeManager.isLocalProxyMode && viewModel.proxyManager.proxyStatus.running {
-                            await viewModel.refreshData()
-                        } else {
-                            await viewModel.refreshQuotasUnified()
-                        }
-                        if let actionError = latestActionError(previousError: previousError) {
-                            showFeedback(
-                                "dashboard.feedback.refreshFailed".localized(fallback: "刷新失败") + ": " + actionError,
-                                isError: true
-                            )
-                        } else {
-                            showFeedback("dashboard.feedback.refreshed".localized(fallback: "仪表盘已刷新"))
-                        }
-                    }
+                    Task { await runDashboardRefreshWithFeedback() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    actionFeedbackGlyph(
+                        state: toolbarRefreshFeedbackState,
+                        idleIcon: "arrow.clockwise"
+                    )
+                    .motionAwareAnimation(feedbackPulseAnimation, value: toolbarRefreshFeedbackState)
                 }
-                .disabled(viewModel.isLoadingQuotas)
+                .buttonStyle(.toolbarIcon)
+                .disabled(viewModel.isLoadingQuotas || toolbarRefreshFeedbackState == .busy)
                 .accessibilityLabel("action.refresh".localized())
                 .help("action.refresh".localized())
             }
@@ -193,33 +229,11 @@ struct DashboardScreen: View {
                 await viewModel.agentSetupViewModel.refreshAgentStatuses()
             }
         }
-        .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+        .task(id: dashboardContentStateID) {
+            runDashboardEntrance()
         }
-        .onDisappear {
-            feedbackDismissTask?.cancel()
+        .overlay(alignment: .top) {
+            TopFeedbackBanner(item: $feedback)
         }
     }
     
@@ -229,13 +243,25 @@ struct DashboardScreen: View {
         VStack(alignment: .leading, spacing: 24) {
             if showGettingStarted {
                 gettingStartedSection
+                    .opacity(layerOpacity(1))
+                    .offset(y: layerOffset(1))
             }
             
             kpiSection
+                .opacity(layerOpacity(1))
+                .offset(y: layerOffset(1))
             operationsCenterSection
+                .opacity(layerOpacity(2))
+                .offset(y: layerOffset(2))
             providerSection
+                .opacity(layerOpacity(2))
+                .offset(y: layerOffset(2))
             endpointSection
+                .opacity(layerOpacity(3))
+                .offset(y: layerOffset(3))
             tunnelSection
+                .opacity(layerOpacity(3))
+                .offset(y: layerOffset(3))
         }
     }
     
@@ -245,12 +271,18 @@ struct DashboardScreen: View {
         VStack(alignment: .leading, spacing: 24) {
             // Quota Overview KPIs
             quotaOnlyKPISection
+                .opacity(layerOpacity(1))
+                .offset(y: layerOffset(1))
             
             // Quick Quota Status
             quotaStatusSection
+                .opacity(layerOpacity(2))
+                .offset(y: layerOffset(2))
             
             // Tracked Accounts
             trackedAccountsSection
+                .opacity(layerOpacity(3))
+                .offset(y: layerOffset(3))
         }
     }
     
@@ -306,12 +338,19 @@ struct DashboardScreen: View {
                         .foregroundStyle(.secondary)
                     
                     Button {
-                        Task { await viewModel.refreshQuotasDirectly() }
+                        Task { await runQuotaRefreshWithFeedback() }
                     } label: {
-                        Label("action.refresh".localized(), systemImage: "arrow.clockwise")
+                        HStack(spacing: 6) {
+                            actionFeedbackGlyph(
+                                state: quotaRefreshFeedbackState,
+                                idleIcon: "arrow.clockwise"
+                            )
+                            Text("action.refresh".localized())
+                        }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(viewModel.isLoadingQuotas)
+                    .motionAwareAnimation(feedbackPulseAnimation, value: quotaRefreshFeedbackState)
+                    .disabled(viewModel.isLoadingQuotas || quotaRefreshFeedbackState == .busy)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
@@ -401,22 +440,23 @@ struct DashboardScreen: View {
                 ProgressView(value: viewModel.proxyManager.downloadProgress)
                     .progressViewStyle(.linear)
                     .frame(width: 200)
-            } else {
-                Button("dashboard.installCLI".localized()) {
-                    Task {
-                        do {
-                            try await viewModel.proxyManager.downloadAndInstallBinary()
-                            showFeedback("dashboard.feedback.installed".localized(fallback: "CLIProxyAPI 已安装"))
-                        } catch {
-                            viewModel.errorMessage = error.localizedDescription
-                            showFeedback(
-                                "dashboard.feedback.installFailed".localized(fallback: "安装失败") + ": " + error.localizedDescription,
-                                isError: true
-                            )
-                        }
+            }
+
+            if !viewModel.proxyManager.isDownloading {
+                Button {
+                    Task { await runInstallBinaryWithFeedback() }
+                } label: {
+                    HStack(spacing: 8) {
+                        actionFeedbackGlyph(
+                            state: installFeedbackState,
+                            idleIcon: "arrow.down.circle"
+                        )
+                        Text("dashboard.installCLI".localized())
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .motionAwareAnimation(feedbackPulseAnimation, value: installFeedbackState)
+                .disabled(installFeedbackState == .busy)
             }
             
             if let error = viewModel.proxyManager.lastError {
@@ -426,6 +466,8 @@ struct DashboardScreen: View {
             }
         }
         .frame(maxWidth: .infinity, minHeight: 300)
+        .opacity(layerOpacity(2))
+        .offset(y: layerOffset(2))
     }
 
     private func latestActionError(previousError: String?) -> String? {
@@ -446,19 +488,114 @@ struct DashboardScreen: View {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(QuotioMotion.successEmphasis, reduceMotion: reduceMotion) {
+            feedback = item
         }
+    }
 
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
+    @ViewBuilder
+    private func actionFeedbackGlyph(
+        state: ToolbarActionFeedbackState,
+        idleIcon: String
+    ) -> some View {
+        ZStack {
+            SmallProgressView()
+                .opacity(state == .busy ? 1 : 0)
+            Image(systemName: "checkmark")
+                .foregroundStyle(Color.semanticSuccess)
+                .opacity(state == .success ? 1 : 0)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.semanticDanger)
+                .opacity(state == .failure ? 1 : 0)
+            Image(systemName: idleIcon)
+                .opacity(state == .idle ? 1 : 0)
+        }
+        .frame(width: 16, height: 16)
+    }
+
+    private func runDashboardRefreshWithFeedback() async {
+        await MainActor.run {
+            toolbarRefreshFeedbackState = .busy
+        }
+        let previousError = normalizedErrorMessage(viewModel.errorMessage)
+        if modeManager.isLocalProxyMode && viewModel.proxyManager.proxyStatus.running {
+            await viewModel.refreshData()
+        } else {
+            await viewModel.refreshQuotasUnified()
+        }
+        let actionError = latestActionError(previousError: previousError)
+        await MainActor.run {
+            if let actionError {
+                toolbarRefreshFeedbackState = .failure
+                showFeedback(
+                    "dashboard.feedback.refreshFailed".localized(fallback: "刷新失败") + ": " + actionError,
+                    isError: true
+                )
+            } else {
+                toolbarRefreshFeedbackState = .success
+                showFeedback("dashboard.feedback.refreshed".localized(fallback: "仪表盘已刷新"))
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+        await MainActor.run {
+            if toolbarRefreshFeedbackState != .busy {
+                toolbarRefreshFeedbackState = .idle
+            }
+        }
+    }
+
+    private func runQuotaRefreshWithFeedback() async {
+        await MainActor.run {
+            quotaRefreshFeedbackState = .busy
+        }
+        let previousError = normalizedErrorMessage(viewModel.errorMessage)
+        await viewModel.refreshQuotasDirectly()
+        let actionError = latestActionError(previousError: previousError)
+        await MainActor.run {
+            if let actionError {
+                quotaRefreshFeedbackState = .failure
+                showFeedback(
+                    "dashboard.feedback.refreshFailed".localized(fallback: "刷新失败") + ": " + actionError,
+                    isError: true
+                )
+            } else {
+                quotaRefreshFeedbackState = .success
+                showFeedback("dashboard.feedback.refreshed".localized(fallback: "配额已刷新"))
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+        await MainActor.run {
+            if quotaRefreshFeedbackState != .busy {
+                quotaRefreshFeedbackState = .idle
+            }
+        }
+    }
+
+    private func runInstallBinaryWithFeedback() async {
+        await MainActor.run {
+            installFeedbackState = .busy
+        }
+        do {
+            try await viewModel.proxyManager.downloadAndInstallBinary()
             await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
+                installFeedbackState = .success
+                showFeedback("dashboard.feedback.installed".localized(fallback: "CLIProxyAPI 已安装"))
+            }
+        } catch {
+            await MainActor.run {
+                viewModel.errorMessage = error.localizedDescription
+                installFeedbackState = .failure
+                showFeedback(
+                    "dashboard.feedback.installFailed".localized(fallback: "安装失败") + ": " + error.localizedDescription,
+                    isError: true
+                )
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+        await MainActor.run {
+            if installFeedbackState != .busy {
+                installFeedbackState = .idle
             }
         }
     }
@@ -472,6 +609,8 @@ struct DashboardScreen: View {
             await viewModel.startProxy()
         }
         .frame(maxWidth: .infinity, minHeight: 300)
+        .opacity(layerOpacity(2))
+        .offset(y: layerOffset(2))
     }
     
     // MARK: - Getting Started Section
@@ -497,7 +636,9 @@ struct DashboardScreen: View {
                 Spacer()
                 
                 Button {
-                    withAnimation { hideGettingStarted = true }
+                    withMotionAwareAnimation(QuotioMotion.dismiss, reduceMotion: reduceMotion) {
+                        hideGettingStarted = true
+                    }
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption)
@@ -631,7 +772,7 @@ struct DashboardScreen: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(riskAccounts, id: \.id) { account in
+                    ForEach(Array(riskAccounts.enumerated()), id: \.element.id) { index, account in
                         HStack(spacing: 8) {
                             Circle()
                                 .fill(account.isFatalDisabled ? Color.semanticDanger : (account.status == "error" ? Color.semanticWarning : Color.semanticInfo))
@@ -645,6 +786,9 @@ struct DashboardScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                         .font(.caption)
+                        .opacity(riskRowOpacity)
+                        .offset(y: riskRowOffset(index: index))
+                        .motionAwareAnimation(riskRowAnimation(index: index), value: dashboardEntrancePhase)
                     }
                 }
 
@@ -740,5 +884,59 @@ struct DashboardScreen: View {
             TunnelSheet()
                 .environment(viewModel)
         }
+    }
+
+    private func runDashboardEntrance() {
+        let contentSwapDelay: Double = motionProfile == .crisp ? 0.06 : 0.08
+        let springDelay: Double = motionProfile == .crisp ? 0.12 : 0.16
+        guard !reduceMotion else {
+            dashboardEntrancePhase = 3
+            return
+        }
+        dashboardEntrancePhase = 0
+        withMotionAwareAnimation(QuotioMotion.pageEnter, reduceMotion: reduceMotion) {
+            dashboardEntrancePhase = 1
+        }
+        withMotionAwareAnimation(QuotioMotion.contentSwap.delay(contentSwapDelay), reduceMotion: reduceMotion) {
+            dashboardEntrancePhase = 2
+        }
+        withMotionAwareAnimation(QuotioMotion.gentleSpring.delay(springDelay), reduceMotion: reduceMotion) {
+            dashboardEntrancePhase = 3
+        }
+    }
+
+    private func layerOpacity(_ phase: Int) -> Double {
+        reduceMotion || dashboardEntrancePhase >= phase ? 1 : 0
+    }
+
+    private func layerOffset(_ phase: Int) -> CGFloat {
+        guard !reduceMotion, dashboardEntrancePhase < phase else { return 0 }
+        let base: CGFloat = motionProfile == .crisp ? 7 : 9
+        let step: CGFloat = motionProfile == .crisp ? 1.5 : 2
+        return base + CGFloat(phase) * step
+    }
+
+    private var riskRowOpacity: Double {
+        reduceMotion || dashboardEntrancePhase >= 2 ? 1 : 0
+    }
+
+    private func riskRowOffset(index: Int) -> CGFloat {
+        guard !reduceMotion, dashboardEntrancePhase < 2 else { return 0 }
+        return CGFloat(4 + min(index, 5) * 2)
+    }
+
+    private func riskRowAnimation(index: Int) -> Animation? {
+        guard !reduceMotion else { return nil }
+        let step = motionProfile == .crisp ? 0.016 : 0.024
+        return QuotioMotion.contentSwap.delay(Double(min(index, 5)) * step)
+    }
+
+    private var dashboardStateTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 8 : 12
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: insertionOffset)),
+            removal: .opacity
+        )
     }
 }

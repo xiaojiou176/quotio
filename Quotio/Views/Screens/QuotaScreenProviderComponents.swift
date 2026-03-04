@@ -78,7 +78,7 @@ struct ProviderSegmentButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .motionAwareAnimation(.easeOut(duration: 0.15), value: isSelected)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: isSelected)
     }
 }
 

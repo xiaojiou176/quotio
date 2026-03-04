@@ -37,6 +37,9 @@ final class OnboardingViewModel {
     var selectedMode: OperatingMode = .monitor
     var remoteEndpoint: String = ""
     var remoteManagementKey: String = ""
+    var remoteSetupErrorMessage: String?
+    var completionErrorMessage: String?
+    var isCompleting = false
     var direction: SlideDirection = .forward
     @ObservationIgnored private let modeManager = OperatingModeManager.shared
     
@@ -77,10 +80,23 @@ final class OnboardingViewModel {
     
     var isRemoteConfigValid: Bool {
         let validation = RemoteURLValidator.validate(remoteEndpoint)
-        return validation.isValid && !remoteManagementKey.isEmpty
+        return validation.isValid && !remoteManagementKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
     func goNext() {
+        if currentStep == .remoteSetup {
+            let trimmedKey = remoteManagementKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedKey.isEmpty {
+                remoteSetupErrorMessage = "onboarding.remote.managementKey.required".localized(
+                    fallback: "请输入 Management Key。"
+                )
+                return
+            }
+            remoteManagementKey = trimmedKey
+            remoteEndpoint = RemoteURLValidator.sanitize(remoteEndpoint)
+            remoteSetupErrorMessage = nil
+        }
+
         direction = .forward
         let currentIndex = currentStepIndex
         if currentIndex < visibleSteps.count - 1 {
@@ -107,6 +123,55 @@ final class OnboardingViewModel {
             modeManager.completeOnboarding(mode: selectedMode)
         }
     }
+
+    func completeOnboardingWithValidation() async -> Bool {
+        completionErrorMessage = nil
+        guard selectedMode == .remoteProxy else {
+            completeOnboarding()
+            return true
+        }
+
+        let sanitizedEndpoint = RemoteURLValidator.sanitize(remoteEndpoint)
+        let endpointValidation = RemoteURLValidator.validate(sanitizedEndpoint)
+        guard endpointValidation.isValid else {
+            completionErrorMessage = endpointValidation.errorMessage
+                ?? "remote.test.cannotConnect".localized(fallback: "连接验证失败")
+            return false
+        }
+
+        let trimmedKey = remoteManagementKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            completionErrorMessage = "onboarding.remote.managementKey.required".localized(
+                fallback: "请输入 Management Key。"
+            )
+            return false
+        }
+
+        isCompleting = true
+        defer { isCompleting = false }
+
+        let config = RemoteConnectionConfig(
+            endpointURL: sanitizedEndpoint,
+            displayName: "Remote Server"
+        )
+        let client = ManagementAPIClient(config: config, managementKey: trimmedKey)
+        defer {
+            Task { await client.invalidate() }
+        }
+
+        let isConnected = await client.checkProxyResponding()
+        guard isConnected else {
+            completionErrorMessage = "remote.test.cannotConnect".localized(
+                fallback: "连接验证失败，请检查地址或 Management Key。"
+            )
+            return false
+        }
+
+        remoteEndpoint = sanitizedEndpoint
+        remoteManagementKey = trimmedKey
+        completeOnboarding()
+        return true
+    }
 }
 
 enum SlideDirection {
@@ -114,8 +179,16 @@ enum SlideDirection {
     case backward
 }
 
+enum OnboardingSubmissionFeedbackState: Equatable {
+    case idle
+    case busy
+    case success
+    case failure
+}
+
 struct OnboardingFlow: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel = OnboardingViewModel()
     
     var onComplete: (() -> Void)?
@@ -126,12 +199,12 @@ struct OnboardingFlow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(viewModel.currentStep)
                 .transition(slideTransition)
-                .motionAwareAnimation(.easeInOut(duration: 0.3), value: viewModel.currentStep)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: viewModel.currentStep)
             
             progressIndicator
                 .padding(.bottom, 24)
         }
-        .frame(width: 640, height: 560)
+        .frame(minWidth: 640, idealWidth: 640, minHeight: 560, idealHeight: 560)
     }
     
     @ViewBuilder
@@ -147,7 +220,8 @@ struct OnboardingFlow: View {
             ProviderStep(viewModel: viewModel)
         case .completion:
             CompletionStep(viewModel: viewModel) {
-                viewModel.completeOnboarding()
+                let didComplete = await viewModel.completeOnboardingWithValidation()
+                guard didComplete else { return }
                 onComplete?()
                 dismiss()
             }
@@ -155,16 +229,49 @@ struct OnboardingFlow: View {
     }
     
     private var slideTransition: AnyTransition {
+        let insertionOffset: CGFloat = reduceMotion ? 0 : 32
+        let removalOffset: CGFloat = reduceMotion ? 0 : 24
+        let insertionScale: CGFloat = reduceMotion ? 1.0 : 0.98
+        let removalScale: CGFloat = reduceMotion ? 1.0 : 1.02
+
         switch viewModel.direction {
         case .forward:
             return .asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
+                insertion: .modifier(
+                    active: StepTransitionModifier(
+                        opacity: 0,
+                        scale: insertionScale,
+                        xOffset: insertionOffset
+                    ),
+                    identity: StepTransitionModifier(opacity: 1, scale: 1, xOffset: 0)
+                ),
+                removal: .modifier(
+                    active: StepTransitionModifier(
+                        opacity: 0,
+                        scale: removalScale,
+                        xOffset: -removalOffset
+                    ),
+                    identity: StepTransitionModifier(opacity: 1, scale: 1, xOffset: 0)
+                )
             )
         case .backward:
             return .asymmetric(
-                insertion: .move(edge: .leading).combined(with: .opacity),
-                removal: .move(edge: .trailing).combined(with: .opacity)
+                insertion: .modifier(
+                    active: StepTransitionModifier(
+                        opacity: 0,
+                        scale: insertionScale,
+                        xOffset: -insertionOffset
+                    ),
+                    identity: StepTransitionModifier(opacity: 1, scale: 1, xOffset: 0)
+                ),
+                removal: .modifier(
+                    active: StepTransitionModifier(
+                        opacity: 0,
+                        scale: removalScale,
+                        xOffset: removalOffset
+                    ),
+                    identity: StepTransitionModifier(opacity: 1, scale: 1, xOffset: 0)
+                )
             )
         }
     }
@@ -175,9 +282,34 @@ struct OnboardingFlow: View {
                 Circle()
                     .fill(index <= viewModel.currentStepIndex ? Color.accentColor : Color.secondary.opacity(0.3))
                     .frame(width: 8, height: 8)
-                    .motionAwareAnimation(.easeInOut(duration: 0.2), value: viewModel.currentStepIndex)
+                    .scaleEffect(index == viewModel.currentStepIndex ? 1.25 : 1.0)
+                    .opacity(index == viewModel.currentStepIndex ? 1.0 : 0.75)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: viewModel.currentStepIndex)
+                    .accessibilityHidden(true)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("onboarding.progress".localized(fallback: "引导进度"))
+        .accessibilityValue(
+            String(
+                format: "onboarding.progress.stepOfTotal".localized(fallback: "第 %d 步，共 %d 步"),
+                viewModel.currentStepIndex + 1,
+                viewModel.totalSteps
+            )
+        )
+    }
+}
+
+private struct StepTransitionModifier: ViewModifier {
+    let opacity: Double
+    let scale: CGFloat
+    let xOffset: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .scaleEffect(scale)
+            .offset(x: xOffset)
     }
 }
 

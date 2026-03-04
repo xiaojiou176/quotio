@@ -52,7 +52,7 @@ struct VersionBadge: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -148,7 +148,7 @@ struct AboutUpdateCard: View {
         )
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.2), reduceMotion: reduceMotion) {
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -323,7 +323,7 @@ struct AboutProxyUpdateCard: View {
         )
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.2), reduceMotion: reduceMotion) {
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
@@ -444,7 +444,7 @@ struct LinkCard: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withMotionAwareAnimation(.easeInOut(duration: 0.15), reduceMotion: reduceMotion) {
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
                 isHovered = hovering
             }
         }
