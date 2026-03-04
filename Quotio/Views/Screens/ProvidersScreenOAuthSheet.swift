@@ -346,7 +346,7 @@ struct OAuthSheet: View {
         .frame(width: 480)
         .frame(minHeight: 350)
         .fixedSize(horizontal: false, vertical: true)
-        .motionAwareAnimation(.easeInOut(duration: 0.2), value: viewModel.oauthState?.status)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: viewModel.oauthState?.status)
         .onChange(of: viewModel.oauthState?.status) { _, newStatus in
             if newStatus == .success {
                 Task {
@@ -372,7 +372,7 @@ private struct OAuthStatusView: View {
     private func restartPollingSpinner() {
         rotationAngle = 0
         guard !reduceMotion else { return }
-        withMotionAwareAnimation(.linear(duration: 1).repeatForever(autoreverses: false), reduceMotion: reduceMotion) {
+        withMotionAwareAnimation(QuotioMotion.continuousLoop, reduceMotion: reduceMotion) {
             rotationAngle = 360
         }
     }

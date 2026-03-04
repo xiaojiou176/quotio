@@ -10,8 +10,10 @@ import SwiftUI
 /// Compact badge showing current mode in sidebar, clickable to open settings
 struct CurrentModeBadge: View {
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modeManager = OperatingModeManager.shared
     @State private var isHovered = false
+    @GestureState private var isPressed = false
     
     var body: some View {
         Button {
@@ -53,11 +55,26 @@ struct CurrentModeBadge: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(borderColor, lineWidth: 1)
             )
+            .scaleEffect(shouldEmphasizeHealthyState && !reduceMotion ? 1.01 : 1)
+            .quotioPressFeedback(isPressed: isPressed)
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                isHovered = hovering
+            }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .updating($isPressed) { _, state, _ in
+                    state = true
+                }
+        )
         .help("sidebar.modeBadge.hint".localized())
-        .motionAwareAnimation(.easeInOut(duration: 0.15), value: isHovered)
+        .motionAwareAnimation(QuotioMotion.hover, value: isHovered)
+        .motionAwareAnimation(QuotioMotion.press, value: isPressed)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: modeStatusAnimationKey)
+        .motionAwareAnimation(QuotioMotion.successEmphasis, value: shouldEmphasizeHealthyState)
     }
     
     private var modeName: String {
@@ -111,6 +128,21 @@ struct CurrentModeBadge: View {
         } else {
             return Color.secondary.opacity(0.15)
         }
+    }
+
+    private var shouldEmphasizeHealthyState: Bool {
+        switch modeManager.currentMode {
+        case .monitor:
+            return !viewModel.directAuthFiles.isEmpty
+        case .localProxy:
+            return viewModel.proxyManager.proxyStatus.running
+        case .remoteProxy:
+            return modeManager.connectionStatus == .connected
+        }
+    }
+
+    private var modeStatusAnimationKey: String {
+        "\(modeManager.currentMode)-\(statusText)"
     }
 }
 

@@ -7,6 +7,7 @@ import SwiftUI
 
 struct CustomProviderSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     let provider: CustomProvider?
     let onSave: (CustomProvider) -> Void
@@ -24,6 +25,7 @@ struct CustomProviderSheet: View {
     
     @State private var validationErrors: [String] = []
     @State private var showValidationAlert = false
+    @State private var showSaveBlockedPulse = false
     
     private var isEditing: Bool {
         provider != nil
@@ -66,6 +68,7 @@ struct CustomProviderSheet: View {
         } message: {
             Text(validationErrors.joined(separator: "\n"))
         }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: validationErrors.count)
     }
     
     // MARK: - Header
@@ -115,7 +118,10 @@ struct CustomProviderSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 
-                TextField("e.g., OpenRouter, Ollama Local", text: $name)
+                TextField(
+                    "customProviders.providerName.placeholder".localized(fallback: "例如：自定义提供商"),
+                    text: $name
+                )
                     .textFieldStyle(.roundedBorder)
             }
             
@@ -158,7 +164,7 @@ struct CustomProviderSheet: View {
                     }
                 }
                 
-                TextField(providerType.defaultBaseURL ?? "https://api.example.com", text: $baseURL)
+                TextField(providerType.defaultBaseURL ?? "", text: $baseURL)
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -213,7 +219,9 @@ struct CustomProviderSheet: View {
     private func apiKeyRow(index: Int) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("API Key #\(index + 1)")
+                Text(
+                    "customProviders.apiKey.index".localized(fallback: "密钥 #\(index + 1)")
+                )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 
@@ -228,7 +236,7 @@ struct CustomProviderSheet: View {
                     }
                     .buttonStyle(.rowActionDestructive)
                     .accessibilityLabel("action.delete".localized())
-                    .help("customProviders.apiKeys.remove".localized(fallback: "删除 API Key"))
+                    .help("customProviders.apiKeys.remove".localized(fallback: "删除密钥"))
                 }
             }
             
@@ -431,19 +439,35 @@ struct CustomProviderSheet: View {
     // MARK: - Footer
     
     private var footerView: some View {
-        HStack {
-            Button("action.cancel".localized()) {
-                dismiss()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button("action.cancel".localized()) {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+
+                Spacer()
+
+                Button {
+                    saveProvider()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: validationErrors.isEmpty ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        Text(isEditing ? "customProviders.saveChanges".localized() : "customProviders.addProvider".localized())
+                    }
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .buttonStyle(.borderedProminent)
+                .scaleEffect(showSaveBlockedPulse ? 0.985 : 1.0)
+                .motionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), value: showSaveBlockedPulse)
             }
-            .keyboardShortcut(.escape)
             
-            Spacer()
-            
-            Button(isEditing ? "customProviders.saveChanges".localized() : "customProviders.addProvider".localized()) {
-                saveProvider()
+            if !validationErrors.isEmpty {
+                Label(validationErrors.first ?? "", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.semanticDanger)
+                    .transition(QuotioMotion.Transition.contentSwap(reduceMotion: reduceMotion))
             }
-            .keyboardShortcut(.return, modifiers: .command)
-            .buttonStyle(.borderedProminent)
         }
         .padding(24)
     }
@@ -486,6 +510,13 @@ struct CustomProviderSheet: View {
             onSave(newProvider)
             dismiss()
         } else {
+            showSaveBlockedPulse = true
+            Task {
+                try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+                await MainActor.run {
+                    showSaveBlockedPulse = false
+                }
+            }
             showValidationAlert = true
         }
     }

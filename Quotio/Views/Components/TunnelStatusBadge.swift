@@ -16,12 +16,43 @@ struct TunnelStatusBadge: View {
     }
     
     @State private var rotationAngle: Double = 0
+    @State private var feedbackScale: CGFloat = 1
+    @State private var feedbackHaloOpacity: Double = 0
+    @State private var isHovered = false
+
+    private var feedbackSettleDelayMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)
+    }
 
     private func restartTransitionSpinner() {
         rotationAngle = 0
-        guard !reduceMotion else { return }
-        withMotionAwareAnimation(.linear(duration: 1).repeatForever(autoreverses: false), reduceMotion: reduceMotion) {
+        guard !reduceMotion, status == .starting || status == .stopping else { return }
+        withMotionAwareAnimation(.linear(duration: QuotioMotion.Duration.looping).repeatForever(autoreverses: false), reduceMotion: reduceMotion) {
             rotationAngle = 360
+        }
+    }
+
+    private func triggerStateFeedback(for newStatus: CloudflareTunnelStatus) {
+        guard !reduceMotion, newStatus == .active || newStatus == .error else {
+            feedbackScale = 1
+            feedbackHaloOpacity = 0
+            return
+        }
+
+        let peakScale: CGFloat = newStatus == .error ? 1.16 : 1.1
+        let peakOpacity: Double = newStatus == .error ? 0.52 : 0.34
+
+        feedbackScale = 0.95
+        feedbackHaloOpacity = 0
+        withMotionAwareAnimation(QuotioMotion.successEmphasis, reduceMotion: reduceMotion) {
+            feedbackScale = peakScale
+            feedbackHaloOpacity = peakOpacity
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(feedbackSettleDelayMilliseconds)) {
+            withMotionAwareAnimation(QuotioMotion.contentSwap, reduceMotion: reduceMotion) {
+                feedbackScale = 1
+                feedbackHaloOpacity = 0
+            }
         }
     }
     
@@ -59,6 +90,14 @@ struct TunnelStatusBadge: View {
                     }
                 }
             }
+            .scaleEffect(feedbackScale)
+            .overlay(
+                Circle()
+                    .stroke(status.color.opacity(feedbackHaloOpacity), lineWidth: 2)
+                    .scaleEffect(1.35)
+                    .opacity(feedbackHaloOpacity)
+            )
+            .motionAwareAnimation(QuotioMotion.successEmphasis, value: feedbackScale)
             .frame(width: 12, height: 12)
             
             if !compact {
@@ -69,12 +108,27 @@ struct TunnelStatusBadge: View {
         }
         .padding(.horizontal, compact ? 6 : 10)
         .padding(.vertical, compact ? 4 : 5)
-        .background(status.color.opacity(0.1))
+        .background(status.color.opacity(isHovered ? 0.16 : 0.1))
         .clipShape(Capsule())
         .overlay(
             Capsule()
-                .strokeBorder(status.color.opacity(0.2), lineWidth: 0.5)
+                .strokeBorder(status.color.opacity(isHovered ? 0.3 : 0.2), lineWidth: 0.5)
         )
+        .onHover { hovering in
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                isHovered = hovering
+            }
+        }
+        .motionAwareAnimation(QuotioMotion.hover, value: isHovered)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("tunnel.status".localized(fallback: "隧道状态"))
+        .accessibilityValue(status.displayName)
+        .onChange(of: status) { oldStatus, newStatus in
+            if oldStatus != newStatus {
+                restartTransitionSpinner()
+                triggerStateFeedback(for: newStatus)
+            }
+        }
     }
 }
 

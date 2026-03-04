@@ -7,6 +7,7 @@ import SwiftUI
 
 struct RemoteConnectionSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(QuotaViewModel.self) private var viewModel
     
     let existingConfig: RemoteConnectionConfig?
@@ -19,23 +20,46 @@ struct RemoteConnectionSheet: View {
     @State private var timeoutSeconds: Int = 30
     @State private var isTestingConnection = false
     @State private var testResult: RemoteTestResult?
+    @State private var emphasizeTestSuccess = false
+    @State private var showTestCompletionBadge = false
+    @State private var testResultPulse = false
     @State private var showSSLWarning = false
     @State private var pendingSSLValue = false
     
     private var isEditing: Bool { existingConfig != nil }
+
+    private var trimmedEndpointURL: String {
+        endpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedManagementKey: String {
+        managementKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     
     private var urlValidation: RemoteURLValidationResult {
-        RemoteURLValidator.validate(endpointURL)
+        RemoteURLValidator.validate(trimmedEndpointURL)
     }
     
     /// Check if URL uses HTTP (not HTTPS) - security warning needed
     private var isInsecureHTTP: Bool {
-        let trimmed = endpointURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = trimmedEndpointURL.lowercased()
         return trimmed.hasPrefix("http://") && urlValidation == .valid
     }
     
     private var canSave: Bool {
-        urlValidation == .valid && !managementKey.isEmpty && !displayName.isEmpty
+        urlValidation == .valid && !trimmedManagementKey.isEmpty && !displayName.isEmpty
+    }
+
+    private var feedbackPulseMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)
+    }
+
+    private var successEmphasisMilliseconds: Int {
+        feedbackPulseMilliseconds * 6
+    }
+
+    private var completionBadgeMilliseconds: Int {
+        feedbackPulseMilliseconds * 2
     }
     
     var body: some View {
@@ -48,12 +72,20 @@ struct RemoteConnectionSheet: View {
                     connectionSection
                     authenticationSection
                     advancedSection
+
+                    if isTestingConnection {
+                        testingConnectionSection
+                            .transition(.opacity.combined(with: .offset(y: 8)))
+                    }
                     
                     if let result = testResult {
                         testResultSection(result)
+                            .transition(.opacity.combined(with: .offset(y: 8)))
                     }
                 }
                 .padding(24)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: isTestingConnection)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: testResult?.success)
             }
             
             Divider()
@@ -130,7 +162,7 @@ struct RemoteConnectionSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 
-                TextField("https://proxy.example.com:8317", text: $endpointURL)
+                TextField("remote.endpointURL.placeholder".localized(fallback: "请输入远程 CLIProxyAPI 地址"), text: $endpointURL)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
                 
@@ -196,19 +228,32 @@ struct RemoteConnectionSheet: View {
             ))
             
             if !verifySSL {
-                Label("remote.verifySSL.warning".localized(), systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(Color.semanticWarning)
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.semanticWarning)
+                    Text("remote.verifySSL.warning".localized())
+                        .font(.caption)
+                        .foregroundStyle(Color.semanticWarning)
+                    Spacer()
+                }
+                .padding(10)
+                .background(Color.semanticWarning.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.semanticWarning.opacity(0.35), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .transition(.opacity.combined(with: .offset(y: -4)))
             }
             
             HStack {
                 Text("remote.timeout".localized())
                 Spacer()
                 Picker("", selection: $timeoutSeconds) {
-                    Text("15s").tag(15)
-                    Text("30s").tag(30)
-                    Text("60s").tag(60)
-                    Text("120s").tag(120)
+                    Text(timeoutOptionLabel(15)).tag(15)
+                    Text(timeoutOptionLabel(30)).tag(30)
+                    Text(timeoutOptionLabel(60)).tag(60)
+                    Text(timeoutOptionLabel(120)).tag(120)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 200)
@@ -219,6 +264,7 @@ struct RemoteConnectionSheet: View {
         .padding()
         .background(Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: verifySSL)
     }
     
     // MARK: - Test Result Section
@@ -227,6 +273,7 @@ struct RemoteConnectionSheet: View {
         HStack(spacing: 12) {
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(result.success ? Color.semanticSuccess : Color.semanticDanger)
+                .scaleEffect(result.success && emphasizeTestSuccess ? 1.08 : 1.0)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.success ? "remote.test.success".localized() : "remote.test.failed".localized())
@@ -245,18 +292,75 @@ struct RemoteConnectionSheet: View {
         .padding()
         .background(result.success ? Color.semanticSuccess.opacity(0.1) : Color.semanticDanger.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if testResultPulse {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke((result.success ? Color.semanticSuccess : Color.semanticDanger).opacity(0.5), lineWidth: 1)
+                    .transition(.opacity)
+            }
+        }
+        .scaleEffect(testResultPulse ? (result.success ? 1.01 : 0.995) : 1.0)
+        .motionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), value: testResultPulse)
+    }
+
+    private var testingConnectionSection: some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("remote.test.inProgress".localized(fallback: "正在测试连接…"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text("remote.test.inProgress.hint".localized(fallback: "请稍候，完成后将显示测试结果。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding()
+        .background(Color.semanticInfo.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("remote.test.inProgress".localized(fallback: "正在测试连接"))
     }
     
     // MARK: - Footer
     
     private var footerView: some View {
         HStack(spacing: 12) {
-            Button("remote.test".localized()) {
+            Button {
                 Task {
                     await testConnection()
                 }
+            } label: {
+                HStack(spacing: 8) {
+                    ZStack {
+                        if isTestingConnection {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if showTestCompletionBadge {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.semanticSuccess)
+                                .scaleEffect(reduceMotion ? 1.0 : 1.08)
+                        } else {
+                            Image(systemName: "network")
+                        }
+                    }
+                    .frame(width: 14, height: 14)
+                    Text(isTestingConnection
+                         ? "remote.test.inProgress".localized(fallback: "正在测试连接…")
+                         : (showTestCompletionBadge
+                            ? "remote.test.success".localized(fallback: "连接成功")
+                            : "remote.test".localized()))
+                }
             }
             .disabled(!canSave || isTestingConnection)
+            .buttonStyle(.borderedProminent)
+            .tint(testResult?.success == true ? Color.semanticSuccess : Color.semanticInfo)
+            .motionAwareAnimation(QuotioMotion.contentSwap, value: isTestingConnection)
+            .motionAwareAnimation(QuotioMotion.contentSwap, value: showTestCompletionBadge)
             
             Spacer()
             
@@ -270,6 +374,7 @@ struct RemoteConnectionSheet: View {
             }
             .keyboardShortcut(.defaultAction)
             .disabled(!canSave)
+            .buttonStyle(.borderedProminent)
         }
         .padding(24)
     }
@@ -292,15 +397,21 @@ struct RemoteConnectionSheet: View {
     private func testConnection() async {
         isTestingConnection = true
         testResult = nil
-        
+        emphasizeTestSuccess = false
+        showTestCompletionBadge = false
+        testResultPulse = false
+
+        let sanitizedEndpoint = RemoteURLValidator.sanitize(trimmedEndpointURL)
+        let trimmedKey = trimmedManagementKey
+
         let config = RemoteConnectionConfig(
-            endpointURL: RemoteURLValidator.sanitize(endpointURL),
+            endpointURL: sanitizedEndpoint,
             displayName: displayName,
             verifySSL: verifySSL,
             timeoutSeconds: timeoutSeconds
         )
-        
-        let client = ManagementAPIClient(config: config, managementKey: managementKey)
+
+        let client = ManagementAPIClient(config: config, managementKey: trimmedKey)
         defer {
             Task { await client.invalidate() }
         }
@@ -311,20 +422,56 @@ struct RemoteConnectionSheet: View {
             success: success,
             message: success ? nil : "remote.test.cannotConnect".localized()
         )
+        testResultPulse = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+            await MainActor.run {
+                testResultPulse = false
+            }
+        }
         
         isTestingConnection = false
+        if success {
+            showTestCompletionBadge = true
+            if reduceMotion {
+                emphasizeTestSuccess = true
+            } else {
+                withMotionAwareAnimation(QuotioMotion.successEmphasis, reduceMotion: reduceMotion) {
+                    emphasizeTestSuccess = true
+                }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(successEmphasisMilliseconds))
+                    withMotionAwareAnimation(QuotioMotion.dismiss, reduceMotion: reduceMotion) {
+                        emphasizeTestSuccess = false
+                    }
+                }
+            }
+            Task {
+                try? await Task.sleep(for: .milliseconds(completionBadgeMilliseconds))
+                await MainActor.run {
+                    showTestCompletionBadge = false
+                }
+            }
+        }
+    }
+
+    private func timeoutOptionLabel(_ seconds: Int) -> String {
+        "remote.timeout.seconds".localizedFormat(fallback: "%d秒", seconds)
     }
     
     private func saveConfiguration() {
+        let sanitizedEndpoint = RemoteURLValidator.sanitize(trimmedEndpointURL)
+        let trimmedKey = trimmedManagementKey
+
         let config = RemoteConnectionConfig(
-            endpointURL: RemoteURLValidator.sanitize(endpointURL),
+            endpointURL: sanitizedEndpoint,
             displayName: displayName,
             verifySSL: verifySSL,
             timeoutSeconds: timeoutSeconds,
             id: existingConfig?.id ?? UUID().uuidString
         )
-        
-        onSave(config, managementKey)
+
+        onSave(config, trimmedKey)
         dismiss()
     }
 }

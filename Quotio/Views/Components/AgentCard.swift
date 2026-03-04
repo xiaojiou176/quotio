@@ -8,6 +8,8 @@ import SwiftUI
 struct AgentCard: View {
     let status: AgentStatus
     let onConfigure: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
     
     var body: some View {
         HStack(spacing: 16) {
@@ -71,15 +73,30 @@ struct AgentCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(status.agent.color)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: status.configured)
             }
         }
         .padding(16)
-        .background(Color.semanticSurfaceElevated)
+        .background(isHovered ? Color.semanticSurfaceMuted : Color.semanticSurfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(status.configured ? status.agent.color.opacity(0.3) : Color.clear, lineWidth: 1)
+                .stroke(
+                    isHovered
+                    ? status.agent.color.opacity(status.configured ? 0.45 : 0.22)
+                    : (status.configured ? status.agent.color.opacity(0.3) : Color.clear),
+                    lineWidth: isHovered ? 1.3 : 1
+                )
         )
+        .shadow(color: isHovered ? status.agent.color.opacity(0.08) : .clear, radius: isHovered ? 8 : 0, y: isHovered ? 2 : 0)
+        .onHover { hovering in
+            withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                isHovered = hovering
+            }
+        }
+        .motionAwareAnimation(QuotioMotion.hover, value: isHovered)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: status.configured)
+        .quotioHoverFeedback(scale: 1.005, opacity: 1)
     }
 }
 
@@ -102,6 +119,7 @@ private struct StatusBadge: View {
         .padding(.vertical, 4)
         .background(status.statusColor.opacity(0.1))
         .clipShape(Capsule())
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: status.statusText)
     }
 }
 

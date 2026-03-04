@@ -434,6 +434,7 @@ nonisolated struct AntigravityAuthFile: Codable, Sendable {
     var expired: String?
     let expiresIn: Int?
     let refreshToken: String?
+    let clientSecret: String?
     let timestamp: Int?
     let type: String?
     // Fields preserved during token refresh (used by CLIProxyAPI)
@@ -447,6 +448,7 @@ nonisolated struct AntigravityAuthFile: Codable, Sendable {
         case expired
         case expiresIn = "expires_in"
         case refreshToken = "refresh_token"
+        case clientSecret = "client_secret"
         case timestamp
         case type
         case prefix
@@ -479,7 +481,7 @@ actor AntigravityQuotaFetcher {
     private let loadProjectAPIURL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
     private let tokenURL = "https://oauth2.googleapis.com/token"
     private let clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-    private let clientSecret = "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"
+    private let clientSecretEnvKey = "ANTIGRAVITY_OAUTH_CLIENT_SECRET"
     private let userAgent = "antigravity/1.11.3 Darwin/arm64"
 
     private var session: URLSession
@@ -504,22 +506,27 @@ actor AntigravityQuotaFetcher {
         subscriptionCache = [:]
     }
 
-    func refreshAccessToken(refreshToken: String) async throws -> String {
-        let (accessToken, _) = try await refreshAccessTokenWithExpiry(refreshToken: refreshToken)
+    func refreshAccessToken(refreshToken: String, clientSecret: String? = nil) async throws -> String {
+        let (accessToken, _) = try await refreshAccessTokenWithExpiry(
+            refreshToken: refreshToken,
+            clientSecret: clientSecret
+        )
         return accessToken
     }
 
-    private func refreshAccessTokenWithExpiry(refreshToken: String) async throws -> (String, Int) {
+    private func refreshAccessTokenWithExpiry(refreshToken: String, clientSecret: String? = nil) async throws -> (String, Int) {
         guard let url = URL(string: tokenURL) else {
             throw QuotaFetchError.invalidURL
         }
+        let resolvedClientSecret = try resolveClientSecret(authFileClientSecret: clientSecret)
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
         let params = [
             "client_id": clientId,
-            "client_secret": clientSecret,
+            "client_secret": resolvedClientSecret,
             "refresh_token": refreshToken,
             "grant_type": "refresh_token"
         ]
@@ -536,6 +543,20 @@ actor AntigravityQuotaFetcher {
 
         let tokenResponse = try JSONDecoder().decode(TokenRefreshResponse.self, from: data)
         return (tokenResponse.accessToken, tokenResponse.expiresIn)
+    }
+
+    private func resolveClientSecret(authFileClientSecret: String?) throws -> String {
+        if let authFileClientSecret,
+           !authFileClientSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return authFileClientSecret
+        }
+
+        if let envClientSecret = ProcessInfo.processInfo.environment[clientSecretEnvKey],
+           !envClientSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return envClientSecret
+        }
+
+        throw QuotaFetchError.missingOAuthClientSecret
     }
 
     /// Persist refreshed access token back to auth file using read-modify-write
@@ -676,7 +697,10 @@ actor AntigravityQuotaFetcher {
 
         if authFile.isExpired, let refreshToken = authFile.refreshToken {
             do {
-                let (token, expiresIn) = try await refreshAccessTokenWithExpiry(refreshToken: refreshToken)
+                let (token, expiresIn) = try await refreshAccessTokenWithExpiry(
+                    refreshToken: refreshToken,
+                    clientSecret: authFile.clientSecret
+                )
                 accessToken = token
                 persistRefreshedToken(at: url, originalData: data, newAccessToken: accessToken, expiresIn: expiresIn)
             } catch {
@@ -722,7 +746,10 @@ actor AntigravityQuotaFetcher {
 
         if authFile.isExpired, let refreshToken = authFile.refreshToken {
             do {
-                let (token, expiresIn) = try await refreshAccessTokenWithExpiry(refreshToken: refreshToken)
+                let (token, expiresIn) = try await refreshAccessTokenWithExpiry(
+                    refreshToken: refreshToken,
+                    clientSecret: authFile.clientSecret
+                )
                 accessToken = token
                 persistRefreshedToken(at: url, originalData: data, newAccessToken: accessToken, expiresIn: expiresIn)
             } catch {
@@ -746,7 +773,10 @@ actor AntigravityQuotaFetcher {
 
         if authFile.isExpired, let refreshToken = authFile.refreshToken {
             do {
-                let (token, expiresIn) = try await refreshAccessTokenWithExpiry(refreshToken: refreshToken)
+                let (token, expiresIn) = try await refreshAccessTokenWithExpiry(
+                    refreshToken: refreshToken,
+                    clientSecret: authFile.clientSecret
+                )
                 accessToken = token
                 persistRefreshedToken(at: url, originalData: data, newAccessToken: accessToken, expiresIn: expiresIn)
             } catch {
@@ -895,6 +925,7 @@ nonisolated enum QuotaFetchError: LocalizedError {
     case httpError(Int)
     case unknown
     case apiErrorMessage(String)
+    case missingOAuthClientSecret
 
     var errorDescription: String? {
         switch self {
@@ -904,6 +935,7 @@ nonisolated enum QuotaFetchError: LocalizedError {
         case .httpError(let code): return "HTTP error: \(code)"
         case .unknown: return "Unknown error"
         case .apiErrorMessage(let msg): return "API error: \(msg)"
+        case .missingOAuthClientSecret: return "Missing OAuth client secret"
         }
     }
 }

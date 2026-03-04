@@ -20,9 +20,35 @@ struct QuotaScreen: View {
     @State var prioritizeAnomalies = true
     @State private var accountStatusFilter: AccountStatusFilter = .all
     @State private var compactAccountView = false
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var refreshActionState: RefreshActionState = .idle
+
+    private enum RefreshActionState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private enum QuotaContentPhase: Equatable {
+        case error
+        case empty
+        case content
+    }
+
+    private var refreshSuccessFeedbackMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 2
+    }
+
+    private var refreshFailureFeedbackMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)
+    }
+
+    private var quotaContentPhase: QuotaContentPhase {
+        if hasAnyData { return .content }
+        if normalizedErrorMessage(viewModel.errorMessage) != nil { return .error }
+        return .empty
+    }
     
     var body: some View {
         Group {
@@ -41,17 +67,21 @@ struct QuotaScreen: View {
                             }
                         }
                     }
+                    .quotioStateSwapTransition(reduceMotion: reduceMotion)
                 } else {
                     ContentUnavailableView(
                         "empty.noAccounts".localized(),
                         systemImage: "person.crop.circle.badge.questionmark",
                         description: Text("empty.addProviderAccounts".localized())
                     )
+                    .quotioStateSwapTransition(reduceMotion: reduceMotion)
                 }
             } else {
                 mainContent
+                    .quotioStateSwapTransition(reduceMotion: reduceMotion)
             }
         }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: quotaContentPhase)
         .navigationTitle("nav.quota".localized())
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -94,17 +124,28 @@ struct QuotaScreen: View {
                 
                 ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task {
-                        await refreshQuotasWithFeedback(
-                            successMessage: "quota.feedback.refreshed".localized(fallback: "额度已刷新")
-                        )
+                    Task { @MainActor in
+                        await performToolbarRefresh()
                     }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    switch refreshActionState {
+                    case .busy:
+                        SmallProgressView()
+                    case .success:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.semanticSuccess)
+                    case .failure:
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(Color.semanticDanger)
+                    case .idle:
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
                 .accessibilityLabel("action.refresh".localized())
                 .help("action.refresh".localized())
                 .disabled(viewModel.isLoadingQuotas)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: refreshActionState)
+                .quotioHoverFeedback()
             }
         }
         .onAppear {
@@ -118,29 +159,7 @@ struct QuotaScreen: View {
             }
         }
         .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+            TopFeedbackBanner(item: $feedback)
         }
     }
     
@@ -793,6 +812,45 @@ struct QuotaScreen: View {
         showFeedback(successMessage)
     }
 
+    @MainActor
+    private func performToolbarRefresh() async {
+        guard refreshActionState != .busy else { return }
+
+        setRefreshActionState(.busy)
+
+        let previousError = normalizedErrorMessage(viewModel.errorMessage)
+        await refreshQuotasWithFeedback(
+            successMessage: "quota.feedback.refreshed".localized(fallback: "额度已刷新")
+        )
+        let didSucceed = latestActionError(previousError: previousError) == nil
+
+        if didSucceed {
+            setRefreshActionState(.success)
+            try? await Task.sleep(for: .milliseconds(refreshSuccessFeedbackMilliseconds))
+        } else {
+            setRefreshActionState(.failure)
+            try? await Task.sleep(for: .milliseconds(refreshFailureFeedbackMilliseconds))
+        }
+
+        setRefreshActionState(.idle)
+    }
+
+    private func setRefreshActionState(_ state: RefreshActionState) {
+        withMotionAwareAnimation(refreshAnimation(from: refreshActionState, to: state), reduceMotion: reduceMotion) {
+            refreshActionState = state
+        }
+    }
+
+    private func refreshAnimation(from oldState: RefreshActionState, to newState: RefreshActionState) -> Animation {
+        if newState == .success {
+            return QuotioMotion.successEmphasis
+        }
+        if (oldState == .success || oldState == .failure), newState == .idle {
+            return QuotioMotion.dismiss
+        }
+        return QuotioMotion.contentSwap
+    }
+
     private func latestActionError(previousError: String?) -> String? {
         guard let currentError = normalizedErrorMessage(viewModel.errorMessage) else {
             return nil
@@ -811,20 +869,9 @@ struct QuotaScreen: View {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
-        }
-
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
-            }
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
+            feedback = item
         }
     }
     
@@ -853,7 +900,7 @@ struct QuotaScreen: View {
                         accountCount: accountCount(for: provider),
                         isSelected: selectedProvider == provider
                     ) {
-                        withMotionAwareAnimation(.easeOut(duration: 0.2), reduceMotion: reduceMotion) {
+                        withMotionAwareAnimation(QuotioMotion.contentSwap, reduceMotion: reduceMotion) {
                             selectedProvider = provider
                         }
                     }

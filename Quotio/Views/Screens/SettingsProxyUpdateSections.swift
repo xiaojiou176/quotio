@@ -9,10 +9,29 @@ import UniformTypeIdentifiers
 
 struct ProxyUpdateSettingsSection: View {
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isCheckingForUpdate = false
     @State private var isUpgrading = false
     @State private var upgradeError: String?
     @State private var showAdvancedSheet = false
+    @State private var checkActionState: UpdateButtonState = .idle
+    @State private var upgradeActionState: UpdateButtonState = .idle
+    @State private var checkResetTask: Task<Void, Never>?
+    @State private var upgradeResetTask: Task<Void, Never>?
+    @State private var isCheckButtonHovered = false
+    @State private var isUpgradeButtonHovered = false
+    @State private var isAdvancedButtonHovered = false
+
+    private enum UpdateButtonState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private var updateSuccessFeedbackMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 3
+    }
 
     private var proxyManager: CLIProxyManager {
         viewModel.proxyManager
@@ -53,8 +72,15 @@ struct ProxyUpdateSettingsSection: View {
                         performUpgrade(to: upgrade)
                     } label: {
                         ZStack {
-                            Text("action.update".localized())
-                                .opacity(isUpgrading ? 0 : 1)
+                            if upgradeActionState == .busy {
+                                Label("status.connecting".localized(fallback: "升级中"), systemImage: "arrow.triangle.2.circlepath")
+                            } else if upgradeActionState == .success {
+                                Label("status.connected".localized(fallback: "已完成"), systemImage: "checkmark.circle.fill")
+                            } else if upgradeActionState == .failure {
+                                Label("status.error".localized(fallback: "升级失败"), systemImage: "exclamationmark.circle.fill")
+                            } else {
+                                Text("action.update".localized())
+                            }
                             
                             if isUpgrading {
                                 SmallProgressView()
@@ -63,6 +89,16 @@ struct ProxyUpdateSettingsSection: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isUpgrading || !proxyManager.proxyStatus.running)
+                    .help(upgradeHintText)
+                    .accessibilityHint(upgradeHintText)
+                    .scaleEffect(isUpgradeButtonHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
+                    .motionAwareAnimation(QuotioMotion.hover, value: isUpgradeButtonHovered)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: upgradeActionState)
+                    .onHover { hovering in
+                        withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                            isUpgradeButtonHovered = hovering
+                        }
+                    }
                 }
             } else {
                 HStack {
@@ -79,8 +115,15 @@ struct ProxyUpdateSettingsSection: View {
                         checkForUpdate()
                     } label: {
                         ZStack {
-                            Text("settings.proxyUpdate.checkNow".localized())
-                                .opacity(isCheckingForUpdate ? 0 : 1)
+                            if checkActionState == .busy {
+                                Label("status.connecting".localized(fallback: "检查中"), systemImage: "arrow.triangle.2.circlepath")
+                            } else if checkActionState == .success {
+                                Label("status.connected".localized(fallback: "已检查"), systemImage: "checkmark.circle.fill")
+                            } else if checkActionState == .failure {
+                                Label("status.error".localized(fallback: "检查失败"), systemImage: "exclamationmark.circle.fill")
+                            } else {
+                                Text("settings.proxyUpdate.checkNow".localized())
+                            }
                             
                             if isCheckingForUpdate {
                                 SmallProgressView()
@@ -88,6 +131,16 @@ struct ProxyUpdateSettingsSection: View {
                         }
                     }
                     .disabled(isCheckingForUpdate)
+                    .help(checkHintText)
+                    .accessibilityHint(checkHintText)
+                    .scaleEffect(isCheckButtonHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
+                    .motionAwareAnimation(QuotioMotion.hover, value: isCheckButtonHovered)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: checkActionState)
+                    .onHover { hovering in
+                        withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                            isCheckButtonHovered = hovering
+                        }
+                    }
                 }
             }
             
@@ -138,7 +191,16 @@ struct ProxyUpdateSettingsSection: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MenuRowButtonStyle(hoverColor: Color.semanticInfo.opacity(0.08), cornerRadius: 8))
+            .help("settings.proxyUpdate.advanced".localized())
+            .accessibilityHint("settings.proxyUpdate.advanced".localized())
+            .scaleEffect(isAdvancedButtonHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
+            .motionAwareAnimation(QuotioMotion.hover, value: isAdvancedButtonHovered)
+            .onHover { hovering in
+                withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                    isAdvancedButtonHovered = hovering
+                }
+            }
         } header: {
             Label("settings.proxyUpdate".localized(), systemImage: "shippingbox.and.arrow.backward")
         } footer: {
@@ -149,9 +211,15 @@ struct ProxyUpdateSettingsSection: View {
             ProxyVersionManagerSheet()
                 .environment(viewModel)
         }
+        .onDisappear {
+            checkResetTask?.cancel()
+            upgradeResetTask?.cancel()
+        }
     }
     
     private func checkForUpdate() {
+        checkResetTask?.cancel()
+        setCheckActionState(.busy)
         isCheckingForUpdate = true
         upgradeError = nil
 
@@ -162,10 +230,17 @@ struct ProxyUpdateSettingsSection: View {
             }
 
             await proxyManager.checkForUpgrade()
+            guard upgradeError == nil else {
+                scheduleCheckActionReset(.failure)
+                return
+            }
+            scheduleCheckActionReset(.success)
         }
     }
     
     private func performUpgrade(to version: ProxyVersionInfo) {
+        upgradeResetTask?.cancel()
+        setUpgradeActionState(.busy)
         isUpgrading = true
         upgradeError = nil
         
@@ -173,11 +248,81 @@ struct ProxyUpdateSettingsSection: View {
             do {
                 try await proxyManager.performManagedUpgrade(to: version)
                 isUpgrading = false
+                scheduleUpgradeActionReset(.success)
             } catch {
                 upgradeError = error.localizedDescription
                 isUpgrading = false
+                scheduleUpgradeActionReset(.failure)
             }
         }
+    }
+
+    private var checkHintText: String {
+        switch checkActionState {
+        case .busy:
+            return "settings.proxyUpdate.checkNow".localized(fallback: "正在检查更新")
+        case .failure:
+            return "status.error".localized(fallback: "更新检查失败")
+        default:
+            return "settings.proxyUpdate.checkNow".localized()
+        }
+    }
+
+    private var upgradeHintText: String {
+        switch upgradeActionState {
+        case .busy:
+            return "action.update".localized(fallback: "正在升级")
+        case .failure:
+            return "status.error".localized(fallback: "升级失败")
+        default:
+            return "action.update".localized()
+        }
+    }
+
+    private func scheduleCheckActionReset(_ state: UpdateButtonState) {
+        checkResetTask?.cancel()
+        setCheckActionState(state)
+        checkResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(updateSuccessFeedbackMilliseconds))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                setCheckActionState(.idle)
+            }
+        }
+    }
+
+    private func scheduleUpgradeActionReset(_ state: UpdateButtonState) {
+        upgradeResetTask?.cancel()
+        setUpgradeActionState(state)
+        upgradeResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(updateSuccessFeedbackMilliseconds))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                setUpgradeActionState(.idle)
+            }
+        }
+    }
+
+    private func setCheckActionState(_ state: UpdateButtonState) {
+        withMotionAwareAnimation(updateButtonAnimation(from: checkActionState, to: state), reduceMotion: reduceMotion) {
+            checkActionState = state
+        }
+    }
+
+    private func setUpgradeActionState(_ state: UpdateButtonState) {
+        withMotionAwareAnimation(updateButtonAnimation(from: upgradeActionState, to: state), reduceMotion: reduceMotion) {
+            upgradeActionState = state
+        }
+    }
+
+    private func updateButtonAnimation(from oldState: UpdateButtonState, to newState: UpdateButtonState) -> Animation {
+        if newState == .success {
+            return QuotioMotion.successEmphasis
+        }
+        if oldState == .failure, newState == .idle {
+            return QuotioMotion.dismiss
+        }
+        return QuotioMotion.contentSwap
     }
 }
 
@@ -186,6 +331,7 @@ struct ProxyUpdateSettingsSection: View {
 struct ProxyVersionManagerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     @State private var availableReleases: [GitHubRelease] = []
     @State private var installedVersions: [InstalledProxyVersion] = []
@@ -199,10 +345,26 @@ struct ProxyVersionManagerSheet: View {
     // State for deletion warning
     @State private var showDeleteWarning = false
     @State private var pendingInstallRelease: GitHubRelease?
+
+    private var feedbackDismissDelay: Duration {
+        .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 11)
+    }
     @State private var versionsToDelete: [String] = []
     
     private var proxyManager: CLIProxyManager {
         viewModel.proxyManager
+    }
+
+    private enum ContentPhase: Equatable {
+        case loading
+        case error
+        case content
+    }
+
+    private var contentPhase: ContentPhase {
+        if isLoading { return .loading }
+        if loadError != nil { return .error }
+        return .content
     }
     
     var body: some View {
@@ -244,6 +406,7 @@ struct ProxyVersionManagerSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             } else if let error = loadError {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
@@ -260,6 +423,7 @@ struct ProxyVersionManagerSheet: View {
                     .buttonStyle(.bordered)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -302,6 +466,7 @@ struct ProxyVersionManagerSheet: View {
                     }
                     .padding(.bottom)
                 }
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             }
             
             // Error footer
@@ -372,6 +537,7 @@ struct ProxyVersionManagerSheet: View {
                 .accessibilityLabel(feedbackMessage)
             }
         }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: contentPhase)
         .onDisappear {
             feedbackDismissTask?.cancel()
         }
@@ -493,15 +659,15 @@ struct ProxyVersionManagerSheet: View {
 
     private func showFeedback(_ message: String) {
         feedbackDismissTask?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) {
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
             feedbackMessage = message
         }
 
         feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
+            try? await Task.sleep(for: feedbackDismissDelay)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
+                withMotionAwareAnimation(QuotioMotion.dismiss, reduceMotion: reduceMotion) {
                     feedbackMessage = nil
                 }
             }

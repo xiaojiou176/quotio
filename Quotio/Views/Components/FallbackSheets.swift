@@ -106,6 +106,7 @@ struct AddFallbackEntrySheet: View {
     var onRefresh: (() async -> Bool)? = nil
 
     @State private var selectedModelId: String = ""
+    @State private var manualModelId: String = ""
     @State private var showValidationError = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -139,13 +140,37 @@ struct AddFallbackEntrySheet: View {
         filteredModels.first { $0.id == selectedModelId }
     }
 
+    private var normalizedManualModelId: String {
+        manualModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Maps a model to its UI provider/icon semantics.
     private func providerFromModel(_ model: AvailableModel) -> AIProvider {
         model.providerPresentation.iconProvider
     }
 
+    private var selectedOrManualModelId: String? {
+        if let selectedModel {
+            return selectedModel.id
+        }
+        guard filteredModels.isEmpty, !normalizedManualModelId.isEmpty else {
+            return nil
+        }
+        return normalizedManualModelId
+    }
+
+    private var selectedOrDetectedProvider: AIProvider? {
+        if let selectedModel {
+            return providerFromModel(selectedModel)
+        }
+        guard let manualModelId = selectedOrManualModelId else {
+            return nil
+        }
+        return AvailableModel.providerPresentation(rawProvider: "", modelId: manualModelId).iconProvider
+    }
+
     private var isValidEntry: Bool {
-        !selectedModelId.isEmpty && selectedModel != nil
+        selectedOrManualModelId != nil && selectedOrDetectedProvider != nil
     }
 
     var body: some View {
@@ -174,13 +199,22 @@ struct AddFallbackEntrySheet: View {
 
                 if filteredModels.isEmpty {
                     // Manual input when no models available
-                    HStack(spacing: 8) {
-                        Text("fallback.noModelsHint".localized())
-                            .font(.caption)
-                            .foregroundStyle(Color.semanticWarning)
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField(
+                            "fallback.modelIdManualPlaceholder".localized(fallback: "手动输入 modelId"),
+                            text: $manualModelId
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("fallback.modelId".localized())
 
-                        if onRefresh != nil {
-                            refreshButton
+                        HStack(spacing: 8) {
+                            Text("fallback.noModelsHint".localized())
+                                .font(.caption)
+                                .foregroundStyle(Color.semanticWarning)
+
+                            if onRefresh != nil {
+                                refreshButton
+                            }
                         }
                     }
                     .padding(.vertical, 8)
@@ -237,6 +271,21 @@ struct AddFallbackEntrySheet: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(.top, 4)
+                } else if filteredModels.isEmpty, let manualId = selectedOrManualModelId, let provider = selectedOrDetectedProvider {
+                    HStack(spacing: 8) {
+                        ProviderIcon(provider: provider, size: 16)
+                        Text(provider.displayName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("→")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        Text(manualId)
+                            .font(.caption)
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
                 }
             }
             .frame(maxWidth: 400)
@@ -249,9 +298,8 @@ struct AddFallbackEntrySheet: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    if isValidEntry, let model = selectedModel {
-                        let provider = providerFromModel(model)
-                        onAdd(provider, model.id)
+                    if let provider = selectedOrDetectedProvider, let modelId = selectedOrManualModelId {
+                        onAdd(provider, modelId)
                         onDismiss()
                     } else {
                         showValidationError = true
@@ -288,10 +336,10 @@ struct AddFallbackEntrySheet: View {
                     }
                 }
 
-                // Show feedback icon briefly, then clear
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                // Keep success/failure icon visible for a rhythm-aligned beat before clearing.
+                try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 6))
                 await MainActor.run {
-                    withMotionAwareAnimation(.easeOut(duration: 0.3), reduceMotion: reduceMotion) {
+                    withMotionAwareAnimation(QuotioMotion.dismiss, reduceMotion: reduceMotion) {
                         refreshSuccess = nil
                     }
                 }

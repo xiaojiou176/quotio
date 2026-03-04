@@ -11,6 +11,8 @@ import Charts
 
 struct UsageStatsScreen: View {
     @Environment(QuotaViewModel.self) var viewModel
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @AppStorage(QuotioMotionProfileStorage.key) private var motionProfileRaw = QuotioMotionProfile.default.rawValue
     @State var featureFlags = FeatureFlagManager.shared
     @State var uiMetrics = UIBaselineMetricsTracker.shared
     @State var usageStats: UsageStats?
@@ -29,9 +31,29 @@ struct UsageStatsScreen: View {
     @State var realtimeAutoScroll = true
     @State var isSSEStreamActive = false
     @State var pollingTask: Task<Void, Never>?
-    @State var feedbackMessage: String?
-    @State var feedbackIsError = false
-    @State var feedbackDismissTask: Task<Void, Never>?
+    @State var feedback: TopFeedbackItem?
+    @State private var refreshFeedbackState: ToolbarActionFeedbackState = .idle
+    @State private var realtimeClearFeedbackState: ToolbarActionFeedbackState = .idle
+    @State private var statsEntrancePhase = 0
+    
+    private var motionProfile: QuotioMotionProfile {
+        QuotioMotionProfile(rawValue: motionProfileRaw) ?? .default
+    }
+
+    private enum ToolbarActionFeedbackState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private var feedbackPulseMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion, profile: motionProfile)
+    }
+
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion, profile: motionProfile)
+    }
     
     enum TimeRange: String, CaseIterable {
         case hour = "1h"
@@ -91,66 +113,69 @@ struct UsageStatsScreen: View {
                     }
                     .pickerStyle(.segmented)
                     .padding()
+                    .opacity(layerOpacity(1))
+                    .offset(y: layerOffset(1))
                     
                     Divider()
                     
                     // Content
-                    if isLoading && usageStats == nil {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let error = errorMessage {
-                        ContentUnavailableView {
-                            Label("stats.error".localized(fallback: "加载错误"), systemImage: "exclamationmark.triangle")
-                        } description: {
-                            Text(error)
-                        } actions: {
-                            Button("stats.retry".localized(fallback: "重试")) {
-                                Task { await loadStats() }
+                    Group {
+                        if isLoading && usageStats == nil {
+                            ProgressView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if let error = errorMessage {
+                            ContentUnavailableView {
+                                Label("stats.error".localized(fallback: "加载错误"), systemImage: "exclamationmark.triangle")
+                            } description: {
+                                Text(error)
+                            } actions: {
+                                Button("stats.retry".localized(fallback: "重试")) {
+                                    Task { await runManualRefreshWithFeedback() }
+                                }
+                                .disabled(refreshFeedbackState == .busy)
+                                .buttonStyle(.borderedProminent)
+                                .motionAwareAnimation(feedbackPulseAnimation, value: refreshFeedbackState)
+                            }
+                        } else {
+                            switch selectedTab {
+                            case .overview:
+                                overviewTab
+                            case .byAccount:
+                                byAccountTab
+                            case .byModel:
+                                byModelTab
+                            case .realtime:
+                                realtimeTab
                             }
                         }
-                    } else {
-                        switch selectedTab {
-                        case .overview:
-                            overviewTab
-                        case .byAccount:
-                            byAccountTab
-                        case .byModel:
-                            byModelTab
-                        case .realtime:
-                            realtimeTab
-                        }
                     }
+                    .id(usageContentStateID)
+                    .transition(statsContentTransition)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: usageContentStateID)
                 }
+                .id(selectedTab)
+                .transition(statsTabTransition)
+                .opacity(layerOpacity(3))
+                .offset(y: layerOffset(3))
             }
         }
         .navigationTitle("nav.usageStats".localized(fallback: "使用统计"))
         .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+            TopFeedbackBanner(item: $feedback)
         }
         .toolbar {
             toolbarContent
+        }
+        .motionAwareAnimation(QuotioMotion.pageExit, value: selectedTab)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: selectedTimeRange)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: historySuccessFilter == nil ? "__all__" : (historySuccessFilter == true ? "__success__" : "__failed__"))
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: realtimeAutoScroll)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: isRealtimePaused)
+        .onAppear {
+            runStatsEntrance()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            runStatsEntrance()
         }
         .task {
             await loadStats()
@@ -168,14 +193,20 @@ struct UsageStatsScreen: View {
             LazyVStack(spacing: 16) {
                 // Summary Cards
                 summaryCardsSection
+                    .opacity(layerOpacity(1))
+                    .offset(y: layerOffset(1))
                 
                 // Time Distribution Chart
                 if let usage = usageStats?.usage {
                     timeDistributionSection(usage: usage)
+                        .opacity(layerOpacity(2))
+                        .offset(y: layerOffset(2))
                 }
                 
                 // Recent Requests
                 recentRequestsSection
+                    .opacity(layerOpacity(3))
+                    .offset(y: layerOffset(3))
             }
             .padding()
         }
@@ -194,6 +225,8 @@ struct UsageStatsScreen: View {
                 icon: "arrow.up.arrow.down",
                 color: Color.semanticInfo
             )
+            .transition(statsRowTransition)
+            .motionAwareAnimation(statsSummaryCardAnimation(index: 0), value: usageContentStateID)
             
             SummaryCard(
                 title: "stats.successRate".localized(fallback: "成功率"),
@@ -201,6 +234,8 @@ struct UsageStatsScreen: View {
                 icon: "checkmark.circle.fill",
                 color: Color.semanticSuccess
             )
+            .transition(statsRowTransition)
+            .motionAwareAnimation(statsSummaryCardAnimation(index: 1), value: usageContentStateID)
             
             SummaryCard(
                 title: "stats.totalTokens".localized(fallback: "总 Token"),
@@ -208,6 +243,8 @@ struct UsageStatsScreen: View {
                 icon: "text.word.spacing",
                 color: Color.semanticAccentSecondary
             )
+            .transition(statsRowTransition)
+            .motionAwareAnimation(statsSummaryCardAnimation(index: 2), value: usageContentStateID)
             
             SummaryCard(
                 title: "stats.failedRequests".localized(fallback: "失败请求"),
@@ -215,6 +252,8 @@ struct UsageStatsScreen: View {
                 icon: "xmark.circle.fill",
                 color: Color.semanticDanger
             )
+            .transition(statsRowTransition)
+            .motionAwareAnimation(statsSummaryCardAnimation(index: 3), value: usageContentStateID)
         }
     }
     
@@ -282,17 +321,21 @@ struct UsageStatsScreen: View {
                     }
                 }
                 
-                if requestHistory.isEmpty {
-                    Text("stats.noRequests".localized(fallback: "暂无请求记录"))
+                if filteredRequestHistory.isEmpty {
+                    Text(historyFilterIsActive
+                         ? "stats.noFilteredRequests".localized(fallback: "筛选后暂无请求记录")
+                         : "stats.noRequests".localized(fallback: "暂无请求记录"))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding()
                 } else {
                     requestHistoryHeader
-                    ForEach(filteredRequestHistory.prefix(20)) { item in
+                    ForEach(Array(filteredRequestHistory.prefix(20).enumerated()), id: \.element.id) { index, item in
                         RequestHistoryRow(item: item) {
                             focusOnRequestHistory(item)
                         }
+                        .transition(statsRowTransition)
+                        .motionAwareAnimation(statsRowAnimation(index: index), value: requestHistoryTransitionKey)
                         if item.id != filteredRequestHistory.prefix(20).last?.id {
                             Divider()
                         }
@@ -300,6 +343,7 @@ struct UsageStatsScreen: View {
                 }
             }
             .padding(.vertical, 8)
+            .motionAwareAnimation(QuotioMotion.contentSwap, value: requestHistoryTransitionKey)
         }
     }
     
@@ -310,8 +354,10 @@ struct UsageStatsScreen: View {
         return ScrollView {
             LazyVStack(spacing: 16) {
                 if !accountStats.isEmpty {
-                    ForEach(accountStats, id: \.account) { item in
+                    ForEach(Array(accountStats.enumerated()), id: \.element.account) { index, item in
                         AccountStatsCard(account: item.account, stats: item.stats)
+                            .transition(statsRowTransition)
+                            .motionAwareAnimation(statsRowAnimation(index: index), value: selectedTab)
                     }
                 } else {
                     ContentUnavailableView {
@@ -330,8 +376,10 @@ struct UsageStatsScreen: View {
             LazyVStack(spacing: 16) {
                 let modelStats = extractModelStats()
                 if !modelStats.isEmpty {
-                    ForEach(modelStats.sorted(by: { $0.requests > $1.requests }), id: \.model) { stat in
+                    ForEach(Array(modelStats.sorted(by: { $0.requests > $1.requests }).enumerated()), id: \.element.model) { index, stat in
                         ModelStatsCard(stat: stat)
+                            .transition(statsRowTransition)
+                            .motionAwareAnimation(statsRowAnimation(index: index), value: selectedTab)
                     }
                 } else {
                     ContentUnavailableView {
@@ -352,6 +400,7 @@ struct UsageStatsScreen: View {
                 Circle()
                     .fill(isSSEConnected ? Color.semanticSuccess : Color.semanticDanger)
                     .frame(width: 8, height: 8)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: isSSEConnected)
                 Text(isSSEConnected ? "stats.connected".localized(fallback: "已连接") : "stats.disconnected".localized(fallback: "未连接"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -360,7 +409,12 @@ struct UsageStatsScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if lastSeenSSESeq > 0 {
-                    Text("seq \(lastSeenSSESeq)")
+                    Text(
+                        "stats.realtime.seq".localizedFormat(
+                            fallback: "序列号 %@",
+                            String(lastSeenSSESeq)
+                        )
+                    )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -374,11 +428,11 @@ struct UsageStatsScreen: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 Button("action.clear".localized(fallback: "清空")) {
-                    sseEvents.removeAll()
-                    sseEventKeys.removeAll()
-                    lastSeenSSESeq = 0
+                    Task { await runRealtimeClearWithFeedback() }
                 }
                 .buttonStyle(.borderless)
+                .disabled(realtimeClearFeedbackState == .busy)
+                .motionAwareAnimation(feedbackPulseAnimation, value: realtimeClearFeedbackState)
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -394,13 +448,18 @@ struct UsageStatsScreen: View {
                     Text("stats.eventsWillAppear".localized(fallback: "实时事件将在此显示"))
                 }
             } else {
-                List(realtimeDisplayEvents, id: \.dedupeKey) { event in
+                List(Array(realtimeDisplayEvents.enumerated()), id: \.element.dedupeKey) { index, event in
                     SSEEventRow(event: event) {
                         focusOnRealtimeEvent(event)
                     }
+                    .transition(statsRowTransition)
+                    .motionAwareAnimation(statsRowAnimation(index: index), value: sseEvents.count)
                 }
             }
         }
+        .id(realtimeContentStateID)
+        .transition(statsContentTransition)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: realtimeContentStateID)
         .task {
             await connectSSE()
         }
@@ -412,13 +471,17 @@ struct UsageStatsScreen: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup {
             Button {
-                Task { await manualRefreshStats() }
+                Task { await runManualRefreshWithFeedback() }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                toolbarActionFeedbackGlyph(
+                    state: refreshFeedbackState,
+                    idleIcon: "arrow.clockwise"
+                )
+                .motionAwareAnimation(feedbackPulseAnimation, value: refreshFeedbackState)
             }
             .accessibilityLabel("action.refresh".localized())
             .help("action.refresh".localized())
-            .disabled(isLoading)
+            .disabled(isLoading || refreshFeedbackState == .busy)
             
             Menu {
                 Button("stats.export".localized(fallback: "导出统计")) {
@@ -432,6 +495,157 @@ struct UsageStatsScreen: View {
             }
             .accessibilityLabel("stats.exportMenu".localized(fallback: "导出菜单"))
             .help("stats.exportMenu".localized(fallback: "打开导出/导入菜单"))
+        }
+    }
+
+    private var requestHistoryTransitionKey: String {
+        [
+            historySearchText,
+            String(describing: historySuccessFilter),
+            String(requestHistory.count)
+        ].joined(separator: "|")
+    }
+
+    private var statsTabTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 8 : 12
+        let removalOffset: CGFloat = motionProfile == .crisp ? 6 : 10
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: insertionOffset)),
+            removal: .opacity.combined(with: .offset(x: -removalOffset))
+        )
+    }
+
+    private var statsContentTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 8 : 12
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: insertionOffset)),
+            removal: .opacity
+        )
+    }
+
+    private var usageContentStateID: String {
+        if isLoading && usageStats == nil {
+            return "loading"
+        }
+        if errorMessage != nil {
+            return "error"
+        }
+        if selectedTab == .overview {
+            return "success-overview-\(selectedTimeRange.rawValue)"
+        }
+        return "success-\(selectedTab.rawValue)"
+    }
+
+    private var statsRowTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionOffset: CGFloat = motionProfile == .crisp ? 7 : 10
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: insertionOffset)),
+            removal: .opacity
+        )
+    }
+
+    private func runStatsEntrance() {
+        let contentSwapDelay: Double = motionProfile == .crisp ? 0.06 : 0.08
+        let springDelay: Double = motionProfile == .crisp ? 0.12 : 0.16
+        guard !reduceMotion else {
+            statsEntrancePhase = 3
+            return
+        }
+        statsEntrancePhase = 0
+        withMotionAwareAnimation(QuotioMotion.pageEnter, reduceMotion: reduceMotion) {
+            statsEntrancePhase = 1
+        }
+        withMotionAwareAnimation(QuotioMotion.contentSwap.delay(contentSwapDelay), reduceMotion: reduceMotion) {
+            statsEntrancePhase = 2
+        }
+        withMotionAwareAnimation(QuotioMotion.gentleSpring.delay(springDelay), reduceMotion: reduceMotion) {
+            statsEntrancePhase = 3
+        }
+    }
+
+    private func layerOpacity(_ phase: Int) -> Double {
+        reduceMotion || statsEntrancePhase >= phase ? 1 : 0
+    }
+
+    private func layerOffset(_ phase: Int) -> CGFloat {
+        guard !reduceMotion, statsEntrancePhase < phase else { return 0 }
+        let base: CGFloat = motionProfile == .crisp ? 7 : 9
+        let step: CGFloat = motionProfile == .crisp ? 1.5 : 2
+        return base + CGFloat(phase) * step
+    }
+
+    private func statsRowAnimation(index: Int) -> Animation? {
+        guard !reduceMotion else { return nil }
+        let step = motionProfile == .crisp ? 0.016 : 0.024
+        return QuotioMotion.contentSwap.delay(Double(min(index, 10)) * step)
+    }
+
+    private func statsSummaryCardAnimation(index: Int) -> Animation? {
+        guard !reduceMotion else { return nil }
+        let step = motionProfile == .crisp ? 0.02 : 0.03
+        return QuotioMotion.contentSwap.delay(Double(min(index, 3)) * step)
+    }
+
+    private var realtimeContentStateID: String {
+        sseEvents.isEmpty ? "realtime-empty" : "realtime-content"
+    }
+
+    @ViewBuilder
+    private func toolbarActionFeedbackGlyph(
+        state: ToolbarActionFeedbackState,
+        idleIcon: String
+    ) -> some View {
+        ZStack {
+            SmallProgressView()
+                .opacity(state == .busy ? 1 : 0)
+            Image(systemName: "checkmark")
+                .foregroundStyle(Color.semanticSuccess)
+                .opacity(state == .success ? 1 : 0)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.semanticDanger)
+                .opacity(state == .failure ? 1 : 0)
+            Image(systemName: idleIcon)
+                .opacity(state == .idle ? 1 : 0)
+        }
+        .frame(width: 16, height: 16)
+    }
+
+    private func runRealtimeClearWithFeedback() async {
+        await MainActor.run {
+            realtimeClearFeedbackState = .busy
+        }
+        await MainActor.run {
+            sseEvents.removeAll()
+            sseEventKeys.removeAll()
+            lastSeenSSESeq = 0
+            realtimeClearFeedbackState = .success
+        }
+        let resetDelay = max(1, feedbackPulseMilliseconds / 2)
+        try? await Task.sleep(for: .milliseconds(resetDelay))
+        await MainActor.run {
+            if realtimeClearFeedbackState != .busy {
+                realtimeClearFeedbackState = .idle
+            }
+        }
+    }
+
+    private func runManualRefreshWithFeedback() async {
+        await MainActor.run {
+            refreshFeedbackState = .busy
+        }
+        await manualRefreshStats()
+        await MainActor.run {
+            let hasError = !(errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            refreshFeedbackState = hasError ? .failure : .success
+        }
+        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+        await MainActor.run {
+            if refreshFeedbackState == .success || refreshFeedbackState == .failure {
+                refreshFeedbackState = .idle
+            }
         }
     }
     

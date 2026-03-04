@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 
 struct UnifiedProxySettingsSection: View {
     @Environment(QuotaViewModel.self) var viewModel
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State var modeManager = OperatingModeManager.shared
     @State var settingsAudit = SettingsAuditTrail.shared
     
@@ -64,9 +65,18 @@ struct UnifiedProxySettingsSection: View {
     @State var isHybridMappingSyncing = false
     @State var hybridMappingLastSyncedAt: Date?
     @State var hybridMappingActiveAction: HybridMappingAction?
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var upstreamRefreshActionState: UpstreamRefreshActionState = .idle
+    @State private var upstreamRefreshResetTask: Task<Void, Never>?
+
+    private enum UpstreamRefreshActionState: Equatable {
+        case idle
+        case success
+    }
+
+    private var upstreamRefreshFeedbackMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 3
+    }
 
     enum HybridMappingAction: Equatable {
         case save
@@ -101,6 +111,20 @@ struct UnifiedProxySettingsSection: View {
         modeManager.isLocalProxyMode 
             ? "settings.proxySettings".localized()
             : "settings.remoteProxySettings".localized()
+    }
+
+    private var loadPhase: ProxySettingsLoadPhase {
+        if !isAPIAvailable { return .unavailable }
+        if isLoading { return .loading }
+        if loadError != nil { return .error }
+        return .content
+    }
+
+    private enum ProxySettingsLoadPhase: Equatable {
+        case unavailable
+        case loading
+        case error
+        case content
     }
 
     var vertexCandidateOpenAIEntries: [OpenAICompatibilityEntry] {
@@ -261,6 +285,7 @@ struct UnifiedProxySettingsSection: View {
                 } header: {
                     Label(sectionTitle, systemImage: "slider.horizontal.3")
                 }
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             } else if isLoading {
                 Section {
                     HStack {
@@ -277,6 +302,7 @@ struct UnifiedProxySettingsSection: View {
                         await loadConfig()
                     }
                 }
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             } else if let error = loadError {
                 Section {
                     HStack {
@@ -294,17 +320,22 @@ struct UnifiedProxySettingsSection: View {
                 } header: {
                     Label(sectionTitle, systemImage: "slider.horizontal.3")
                 }
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             } else {
-                upstreamProxySection
-                routingStrategySection
-                vertexRoutedUsageSourceSection
-                upstreamHitRealtimePanelSection
-                hybridNamespaceModelSetSection
-                quotaExceededSection
-                retryConfigurationSection
-                loggingSection
+                Group {
+                    upstreamProxySection
+                    routingStrategySection
+                    vertexRoutedUsageSourceSection
+                    upstreamHitRealtimePanelSection
+                    hybridNamespaceModelSetSection
+                    quotaExceededSection
+                    retryConfigurationSection
+                    loggingSection
+                }
+                .quotioStateSwapTransition(reduceMotion: reduceMotion)
             }
         }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: loadPhase)
         .sheet(isPresented: $showHybridMappingEditor) {
             HybridNamespaceModelSetEditorSheet(
                 title: hybridMappingSheetTitle,
@@ -360,32 +391,10 @@ struct UnifiedProxySettingsSection: View {
             )
         }
         .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+            TopFeedbackBanner(item: $feedback)
         }
         .onDisappear {
-            feedbackDismissTask?.cancel()
+            upstreamRefreshResetTask?.cancel()
             stopUpstreamHitAutoRefresh()
         }
         .task(id: isAPIAvailable) {
@@ -399,20 +408,9 @@ struct UnifiedProxySettingsSection: View {
     }
 
     func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
-        }
-
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
-            }
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), reduceMotion: reduceMotion) {
+            feedback = item
         }
     }
     
@@ -772,18 +770,23 @@ struct UnifiedProxySettingsSection: View {
 
             HStack(spacing: 10) {
                 Button {
-                    Task { await refreshUpstreamHitCounts() }
+                    Task { @MainActor in
+                        await performManualUpstreamRefresh()
+                    }
                 } label: {
                     if isLoadingUpstreamHitCounts {
                         HStack(spacing: 6) {
                             SmallProgressView()
                             Text("action.refreshing".localized(fallback: "刷新中"))
                         }
+                    } else if upstreamRefreshActionState == .success {
+                        Label("status.connected".localized(fallback: "已刷新"), systemImage: "checkmark.circle.fill")
                     } else {
                         Label("action.refresh".localized(fallback: "刷新"), systemImage: "arrow.clockwise")
                     }
                 }
                 .disabled(isLoadingUpstreamHitCounts)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: upstreamRefreshActionState)
 
                 Spacer()
 
@@ -959,6 +962,43 @@ struct UnifiedProxySettingsSection: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
         .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    @MainActor
+    private func performManualUpstreamRefresh() async {
+        upstreamRefreshResetTask?.cancel()
+        await refreshUpstreamHitCounts()
+        guard upstreamHitLoadError == nil else {
+            setUpstreamRefreshActionState(.idle)
+            return
+        }
+        setUpstreamRefreshActionState(.success)
+        upstreamRefreshResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(upstreamRefreshFeedbackMilliseconds))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                setUpstreamRefreshActionState(.idle)
+            }
+        }
+    }
+
+    private func setUpstreamRefreshActionState(_ state: UpstreamRefreshActionState) {
+        withMotionAwareAnimation(upstreamRefreshAnimation(from: upstreamRefreshActionState, to: state), reduceMotion: reduceMotion) {
+            upstreamRefreshActionState = state
+        }
+    }
+
+    private func upstreamRefreshAnimation(
+        from oldState: UpstreamRefreshActionState,
+        to newState: UpstreamRefreshActionState
+    ) -> Animation {
+        if newState == .success {
+            return QuotioMotion.successEmphasis
+        }
+        if oldState == .success, newState == .idle {
+            return QuotioMotion.dismiss
+        }
+        return QuotioMotion.contentSwap
     }
 
 }

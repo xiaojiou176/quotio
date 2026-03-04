@@ -108,12 +108,26 @@ struct OperatingModeSection: View {
 
 struct RemoteServerSection: View {
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showRemoteConfigSheet = false
     @State private var isReconnecting = false
     @State private var modeManager = OperatingModeManager.shared
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var reconnectActionState: ReconnectActionState = .idle
+    @State private var reconnectActionResetTask: Task<Void, Never>?
+    @State private var isConfigureButtonHovered = false
+    @State private var isReconnectButtonHovered = false
+
+    private enum ReconnectActionState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private var reconnectSuccessFeedbackMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion) * 3
+    }
 
     var body: some View {
         Section {
@@ -140,32 +154,10 @@ struct RemoteServerSection: View {
             .environment(viewModel)
         }
         .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+            TopFeedbackBanner(item: $feedback)
         }
         .onDisappear {
-            feedbackDismissTask?.cancel()
+            reconnectActionResetTask?.cancel()
         }
     }
     
@@ -195,6 +187,15 @@ struct RemoteServerSection: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .help("settings.remoteServer.configure".localized())
+            .accessibilityHint("settings.remoteServer.configure".localized())
+            .scaleEffect(isConfigureButtonHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
+            .motionAwareAnimation(QuotioMotion.hover, value: isConfigureButtonHovered)
+            .onHover { hovering in
+                withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                    isConfigureButtonHovered = hovering
+                }
+            }
         }
     }
     
@@ -205,9 +206,11 @@ struct RemoteServerSection: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
+                .contentTransition(.opacity)
             
             Text(statusText)
                 .font(.subheadline)
+                .contentTransition(.opacity)
             
             Spacer()
             
@@ -215,9 +218,13 @@ struct RemoteServerSection: View {
                 Button {
                     reconnect()
                 } label: {
-                    if isReconnecting {
+                    if reconnectActionState == .busy {
                         ProgressView()
                             .controlSize(.small)
+                    } else if reconnectActionState == .success {
+                        Label("status.connected".localized(fallback: "已连接"), systemImage: "checkmark.circle.fill")
+                    } else if reconnectActionState == .failure {
+                        Label("status.error".localized(fallback: "重连失败"), systemImage: "exclamationmark.circle.fill")
                     } else {
                         Label("action.reconnect".localized(), systemImage: "arrow.clockwise")
                     }
@@ -227,8 +234,17 @@ struct RemoteServerSection: View {
                 .disabled(isReconnectDisabled)
                 .help(reconnectHintText)
                 .accessibilityHint(reconnectHintText)
+                .scaleEffect(isReconnectButtonHovered && !reduceMotion ? QuotioMotion.Scale.hovered : 1)
+                .motionAwareAnimation(QuotioMotion.hover, value: isReconnectButtonHovered)
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: reconnectActionState)
+                .onHover { hovering in
+                    withMotionAwareAnimation(QuotioMotion.hover, reduceMotion: reduceMotion) {
+                        isReconnectButtonHovered = hovering
+                    }
+                }
             }
         }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: modeManager.connectionStatus)
     }
     
     private var shouldShowReconnectButton: Bool {
@@ -289,9 +305,12 @@ struct RemoteServerSection: View {
     private func reconnect() {
         guard !isReconnectDisabled else {
             showFeedback(reconnectHintText, isError: true)
+            scheduleReconnectActionReset(.failure)
             return
         }
 
+        reconnectActionResetTask?.cancel()
+        setReconnectActionState(.busy)
         isReconnecting = true
 
         Task { @MainActor in
@@ -299,6 +318,7 @@ struct RemoteServerSection: View {
             defer { isReconnecting = false }
             await viewModel.reconnectRemote()
             handlePostRemoteActionFeedback(previousStatus: previousStatus, action: .reconnect)
+            await finalizeReconnectActionState(previousStatus: previousStatus)
         }
     }
 
@@ -335,21 +355,91 @@ struct RemoteServerSection: View {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
 
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
+            feedback = item
         }
+    }
 
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
+    @MainActor
+    private func finalizeReconnectActionState(previousStatus: ConnectionStatus) async {
+        let didSucceed = modeManager.connectionStatus == .connected && modeManager.connectionStatus != previousStatus
+        if didSucceed {
+            scheduleReconnectActionReset(.success)
+        } else {
+            scheduleReconnectActionReset(.failure)
+        }
+    }
+
+    @MainActor
+    private func scheduleReconnectActionReset(_ state: ReconnectActionState) {
+        reconnectActionResetTask?.cancel()
+        setReconnectActionState(state)
+
+        reconnectActionResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(reconnectSuccessFeedbackMilliseconds))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
+                setReconnectActionState(.idle)
+            }
+        }
+    }
+
+    private func setReconnectActionState(_ state: ReconnectActionState) {
+        withMotionAwareAnimation(reconnectActionAnimation(from: reconnectActionState, to: state), reduceMotion: reduceMotion) {
+            reconnectActionState = state
+        }
+    }
+
+    private func reconnectActionAnimation(from oldState: ReconnectActionState, to newState: ReconnectActionState) -> Animation {
+        if newState == .success {
+            return QuotioMotion.successEmphasis
+        }
+        if oldState == .failure, newState == .idle {
+            return QuotioMotion.dismiss
+        }
+        return QuotioMotion.contentSwap
+    }
+}
+
+struct MotionProfileSection: View {
+    @AppStorage(QuotioMotionProfileStorage.key) private var motionProfileRawValue = QuotioMotionProfile.default.rawValue
+    @State private var settingsAudit = SettingsAuditTrail.shared
+
+    private var motionProfileBinding: Binding<QuotioMotionProfile> {
+        Binding(
+            get: { QuotioMotionProfile(rawValue: motionProfileRawValue) ?? .default },
+            set: { newProfile in
+                let oldValue = motionProfileRawValue
+                motionProfileRawValue = newProfile.rawValue
+                settingsAudit.recordChange(
+                    key: "ui.motion_profile",
+                    oldValue: oldValue,
+                    newValue: newProfile.rawValue,
+                    source: "settings.motion_profile"
+                )
+            }
+        )
+    }
+
+    var body: some View {
+        Section {
+            Picker(
+                "settings.motion.profile.title".localized(fallback: "动效风格"),
+                selection: motionProfileBinding
+            ) {
+                ForEach(QuotioMotionProfile.allCases) { profile in
+                    Text(profile.localizationKey.localized(fallback: profile.rawValue.capitalized))
+                        .tag(profile)
                 }
             }
+            .accessibilityLabel("settings.motion.profile.title".localized(fallback: "动效风格"))
+        } header: {
+            Label("settings.motion.title".localized(fallback: "动效节奏"), systemImage: "waveform.path")
+        } footer: {
+            Text("settings.motion.profile.help".localized(fallback: "Calm 更柔和，Crisp 更干脆。系统“减少动态效果”开启时仍会优先禁用动画。"))
+                .font(.caption)
         }
     }
 }

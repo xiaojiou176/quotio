@@ -37,7 +37,7 @@ struct QuotaProgressBar: View {
                 Capsule()
                     .fill(semanticTint)
                     .frame(width: fillWidth)
-                    .motionAwareAnimation(.smooth(duration: 0.3), value: clamped)
+                    .motionAwareAnimation(QuotioMotion.contentSwap, value: clamped)
             }
         }
         .frame(height: height)

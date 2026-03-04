@@ -13,6 +13,7 @@ import AppKit
 import UniformTypeIdentifiers
 struct ProvidersScreen: View {
     @Environment(QuotaViewModel.self) var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isImporterPresented = false
     @State private var selectedProvider: AIProvider?
     @State private var projectId: String = ""
@@ -22,6 +23,7 @@ struct ProvidersScreen: View {
     @State private var showWarpConnectionSheet = false
     @State private var editingWarpToken: WarpService.WarpToken?
     @State private var showAddProviderPopover = false
+    @State private var pendingProviderAfterProxyStart: AIProvider?
     @State private var switchingAccount: AccountRowData?
     @State private var modeManager = OperatingModeManager.shared
     @State private var uiExperience = UIExperienceSettingsManager.shared
@@ -35,9 +37,15 @@ struct ProvidersScreen: View {
     @State var egressSortMode: EgressSortMode = .issuesFirst
     @State private var prioritizeAnomalies = true
     @State private var compactAccountsView = false
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var refreshFeedbackState: RefreshFeedbackState = .idle
+    @State private var isInitialAccountsLoading = true
+    private var feedbackPulseMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)
+    }
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion)
+    }
     let customProviderService = CustomProviderService.shared
     let warpService = WarpService.shared
     let egressAllProviderFilter = "__all__"
@@ -67,6 +75,12 @@ struct ProvidersScreen: View {
                 return "person.text.rectangle"
             }
         }
+    }
+    enum RefreshFeedbackState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
     }
     // MARK: - Computed Properties
     /// Providers that can be added manually
@@ -190,31 +204,14 @@ struct ProvidersScreen: View {
             }
         }
         .environment(\.defaultMinListRowHeight, uiExperience.recommendedMinimumRowHeight)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: compactAccountsView)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: prioritizeAnomalies)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: showOnlyEgressIssues)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: selectedEgressProviderFilter)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: egressSortMode)
         .navigationTitle(modeManager.isMonitorMode ? "nav.accounts".localized() : "nav.providers".localized())
         .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
-            }
+            TopFeedbackBanner(item: $feedback)
         }
         .toolbar {
             toolbarContent
@@ -255,9 +252,13 @@ struct ProvidersScreen: View {
             }
         }
         .task {
+            isInitialAccountsLoading = true
             uiMetrics.begin("providers.screen.initial_load")
             await viewModel.loadDirectAuthFiles()
             await refreshEgressMapping()
+            await MainActor.run {
+                isInitialAccountsLoading = false
+            }
             uiMetrics.end(
                 "providers.screen.initial_load",
                 metadata: "providers=\(groupedAccounts.count),accounts=\(totalAccountCount)"
@@ -327,8 +328,10 @@ struct ProvidersScreen: View {
             )
             .environment(viewModel)
         }
-        .onDisappear {
-            feedbackDismissTask?.cancel()
+        .onChange(of: viewModel.proxyManager.proxyStatus.running) { _, isRunning in
+            guard isRunning, let pendingProviderAfterProxyStart else { return }
+            self.pendingProviderAfterProxyStart = nil
+            performProviderAdd(pendingProviderAfterProxyStart)
         }
     }
     // MARK: - Toolbar
@@ -340,6 +343,7 @@ struct ProvidersScreen: View {
             } label: {
                 Image(systemName: "plus")
             }
+            .buttonStyle(.toolbarIcon)
             .help("providers.addAccount".localized())
             .accessibilityLabel("providers.addAccount".localized())
         }
@@ -355,6 +359,9 @@ struct ProvidersScreen: View {
         ToolbarItem(placement: .automatic) {
             Button {
                 Task {
+                    await MainActor.run {
+                        refreshFeedbackState = .busy
+                    }
                     let previousError = normalizedErrorMessage(viewModel.errorMessage)
                     if modeManager.isLocalProxyMode && viewModel.proxyManager.proxyStatus.running {
                         await viewModel.refreshData()
@@ -369,19 +376,52 @@ struct ProvidersScreen: View {
                                 "providers.feedback.refreshFailed".localized(fallback: "刷新失败") + ": " + actionError,
                                 isError: true
                             )
+                            refreshFeedbackState = .failure
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+                                await MainActor.run {
+                                    if refreshFeedbackState == .failure {
+                                        refreshFeedbackState = .idle
+                                    }
+                                }
+                            }
                         } else {
                             showFeedback("providers.feedback.refreshed".localized(fallback: "账号列表已刷新"))
+                            refreshFeedbackState = .success
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+                                await MainActor.run {
+                                    if refreshFeedbackState == .success {
+                                        refreshFeedbackState = .idle
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             } label: {
-                if viewModel.isLoadingQuotas {
+                ZStack {
                     SmallProgressView()
-                } else {
+                        .opacity(refreshFeedbackState == .busy ? 1 : 0)
+                    Image(systemName: "checkmark")
+                        .frame(width: 16, height: 16)
+                        .foregroundStyle(Color.semanticSuccess)
+                        .scaleEffect((refreshFeedbackState == .success && !reduceMotion) ? 1.08 : 1.0)
+                        .opacity(refreshFeedbackState == .success ? 1 : 0)
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .frame(width: 16, height: 16)
+                        .foregroundStyle(Color.semanticDanger)
+                        .scaleEffect((refreshFeedbackState == .failure && !reduceMotion) ? 1.06 : 1.0)
+                        .opacity(refreshFeedbackState == .failure ? 1 : 0)
                     Image(systemName: "arrow.clockwise")
+                        .frame(width: 16, height: 16)
+                        .opacity(refreshFeedbackState == .idle ? 1 : 0)
                 }
+                .frame(width: 16, height: 16)
+                .motionAwareAnimation(feedbackPulseAnimation, value: refreshFeedbackState)
             }
-            .disabled(viewModel.isLoadingQuotas)
+            .buttonStyle(.toolbarIcon)
+            .disabled(refreshFeedbackState == .busy || viewModel.isLoadingQuotas)
             .help("action.refresh".localized())
             .accessibilityLabel("action.refresh".localized())
         }
@@ -394,13 +434,6 @@ struct ProvidersScreen: View {
                 Toggle("providers.prioritizeAnomalies".localized(fallback: "异常优先"), isOn: $prioritizeAnomalies)
                     .toggleStyle(.switch)
                     .font(.caption)
-                Picker("providers.viewMode".localized(fallback: "视图模式"), selection: $compactAccountsView) {
-                    Text("providers.viewMode.card".localized(fallback: "卡片")).tag(false)
-                    Text("providers.viewMode.compact".localized(fallback: "紧凑")).tag(true)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 120)
-                .controlSize(.small)
                 HStack(spacing: 8) {
                     providerIssueChip(title: "quota.health.error".localized(fallback: "错误"), value: accountHealthCounts.error, color: Color.semanticDanger)
                     providerIssueChip(title: "quota.health.cooling".localized(fallback: "冷却中"), value: accountHealthCounts.cooling, color: Color.semanticWarning)
@@ -409,7 +442,15 @@ struct ProvidersScreen: View {
                     providerIssueChip(title: "quota.status.networkError".localized(fallback: "网络抖动"), value: accountHealthCounts.networkError, color: Color.semanticInfo)
                 }
             }
-            if groupedAccounts.isEmpty {
+            if isInitialAccountsLoading {
+                HStack(spacing: 8) {
+                    SmallProgressView()
+                    Text("action.loading".localized(fallback: "加载中..."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+            } else if groupedAccounts.isEmpty {
                 // Empty state
                 AccountsEmptyState(
                     onScanIDEs: {
@@ -521,7 +562,7 @@ struct ProvidersScreen: View {
                     onDelete: {
                         customProviderService.deleteProvider(id: provider.id)
                         if syncCustomProvidersToConfig() {
-                            showFeedback("providers.feedback.deleted".localized(fallback: "自定义 Provider 已删除"))
+                            showDestructiveFeedback("providers.feedback.deleted".localized(fallback: "自定义 Provider 已删除"))
                         }
                     },
                     onToggle: {
@@ -554,9 +595,14 @@ struct ProvidersScreen: View {
     private func handleAddProvider(_ provider: AIProvider) {
         // In Local Proxy Mode, require proxy to be running for OAuth
         if modeManager.isLocalProxyMode && !viewModel.proxyManager.proxyStatus.running {
+            pendingProviderAfterProxyStart = provider
             showProxyRequiredAlert = true
             return
         }
+        performProviderAdd(provider)
+    }
+
+    private func performProviderAdd(_ provider: AIProvider) {
         if provider == .vertex {
             isImporterPresented = true
         } else if provider == .warp {
@@ -577,7 +623,7 @@ struct ProvidersScreen: View {
             if let glmProvider = customProviderService.providers.first(where: { $0.id.uuidString == account.id }) {
                 customProviderService.deleteProvider(id: glmProvider.id)
                 if syncCustomProvidersToConfig() {
-                    showFeedback("providers.feedback.deleted".localized(fallback: "账号已删除"))
+                    showDestructiveFeedback("providers.feedback.deleted".localized(fallback: "账号已删除"))
                 }
             }
             return
@@ -588,7 +634,7 @@ struct ProvidersScreen: View {
                 warpService.deleteToken(id: uuid)
                 await viewModel.refreshQuotaForProvider(.warp)
                 await MainActor.run {
-                    showFeedback("providers.feedback.deleted".localized(fallback: "账号已删除"))
+                    showDestructiveFeedback("providers.feedback.deleted".localized(fallback: "账号已删除"))
                 }
             }
             return
@@ -597,7 +643,7 @@ struct ProvidersScreen: View {
         if let authFile = viewModel.authFiles.first(where: { $0.id == account.id }) {
             await viewModel.deleteAuthFile(authFile)
             await MainActor.run {
-                showFeedback("providers.feedback.deleted".localized(fallback: "账号已删除"))
+                showDestructiveFeedback("providers.feedback.deleted".localized(fallback: "账号已删除"))
             }
         }
     }
@@ -640,20 +686,15 @@ struct ProvidersScreen: View {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
+            feedback = item
         }
+    }
 
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
-            }
+    private func showDestructiveFeedback(_ message: String) {
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
+            feedback = TopFeedbackItem.destructiveSuccess(message)
         }
     }
 }

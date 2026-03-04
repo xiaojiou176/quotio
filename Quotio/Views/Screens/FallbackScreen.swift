@@ -7,6 +7,7 @@ import SwiftUI
 
 struct FallbackScreen: View {
     @Environment(QuotaViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var fallbackSettings = FallbackSettingsManager.shared
     @State private var showAddVirtualModelSheet = false
     @State private var editingVirtualModel: VirtualModel?
@@ -17,9 +18,20 @@ struct FallbackScreen: View {
     @State private var previousFallbackEnabled: Bool?
     @State private var modelCatalogState: ModelCatalogState = .idle
     @State private var modelCatalogErrorMessage: String?
-    @State private var feedbackMessage: String?
-    @State private var feedbackIsError = false
-    @State private var feedbackDismissTask: Task<Void, Never>?
+    @State private var feedback: TopFeedbackItem?
+    @State private var showClearRouteStatesConfirmation = false
+    @State private var modelCatalogRefreshState: ModelCatalogRefreshState = .idle
+    @State private var isClearingRouteStates = false
+    @State private var clearRouteStatesPulse = false
+    private var feedbackPulseMilliseconds: Int {
+        TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)
+    }
+    private var feedbackPulseAnimation: Animation {
+        TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion)
+    }
+    private var clearRouteStatesLeadInMilliseconds: Int {
+        max(1, feedbackPulseMilliseconds / 4)
+    }
 
     private enum ModelCatalogState: Equatable {
         case idle
@@ -28,6 +40,12 @@ struct FallbackScreen: View {
         case empty
         case error
         case success(count: Int, fallbackData: Bool)
+    }
+    private enum ModelCatalogRefreshState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
     }
 
     /// Check if Bridge Mode is enabled
@@ -135,33 +153,41 @@ struct FallbackScreen: View {
         } message: {
             Text("fallback.duplicateNameMessage".localized())
         }
-        .overlay(alignment: .top) {
-            if let feedbackMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: feedbackIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedbackIsError ? Color.semanticDanger : Color.semanticSuccess)
-                    Text(feedbackMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
+        .confirmationDialog(
+            "fallback.confirm.clearRouteStates.title".localized(fallback: "确认清空活动路由状态"),
+            isPresented: $showClearRouteStatesConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("action.delete".localized(fallback: "清空"), role: .destructive) {
+                Task {
+                    let clearedCount = fallbackSettings.activeRouteStates.count
+                    await MainActor.run {
+                        isClearingRouteStates = true
+                        clearRouteStatesPulse = false
+                    }
+                    if !reduceMotion {
+                        try? await Task.sleep(for: .milliseconds(clearRouteStatesLeadInMilliseconds))
+                    }
+                    await MainActor.run {
+                        fallbackSettings.clearAllRouteStates()
+                        isClearingRouteStates = false
+                        clearRouteStatesPulse = true
+                        showDestructiveFeedback(
+                            "fallback.feedback.routesCleared".localized(fallback: "活动路由状态已清空") + " (\(clearedCount))"
+                        )
+                    }
+                    try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+                    await MainActor.run {
+                        clearRouteStatesPulse = false
+                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder((feedbackIsError ? Color.semanticDanger : Color.semanticSuccess).opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: Color.primary.opacity(0.1), radius: 8, x: 0, y: 3)
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(feedbackMessage)
             }
+            Button("action.cancel".localized(fallback: "取消"), role: .cancel) {}
+        } message: {
+            Text("fallback.confirm.clearRouteStates.message".localized(fallback: "清空后将丢失当前回退进度，下一次请求将从初始路由重新开始。"))
         }
-        .onDisappear {
-            feedbackDismissTask?.cancel()
+        .overlay(alignment: .top) {
+            TopFeedbackBanner(item: $feedback)
         }
     }
 
@@ -197,6 +223,43 @@ struct FallbackScreen: View {
         modelCatalogState = .success(count: agentVM.availableModels.count, fallbackData: !loadedFromRemote)
         if !loadedFromRemote {
             modelCatalogErrorMessage = "fallback.modelCatalog.cachedFallback".localized(fallback: "当前使用本地默认模型列表。")
+        }
+    }
+
+    private func triggerModelCatalogRefresh(forceRefresh: Bool) {
+        Task {
+            await MainActor.run {
+                modelCatalogRefreshState = .busy
+            }
+            await refreshModelCatalog(forceRefresh: forceRefresh)
+            await MainActor.run {
+                if case .success = modelCatalogState {
+                    modelCatalogRefreshState = .success
+                    showFeedback("fallback.modelCatalog.refreshed".localized(fallback: "模型目录已刷新"))
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+                        await MainActor.run {
+                            if modelCatalogRefreshState == .success {
+                                modelCatalogRefreshState = .idle
+                            }
+                        }
+                    }
+                } else {
+                    modelCatalogRefreshState = .failure
+                    showFeedback(
+                        modelCatalogErrorMessage ?? "fallback.modelCatalog.loadFailed".localized(fallback: "模型目录加载失败，请重试。"),
+                        isError: true
+                    )
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(feedbackPulseMilliseconds))
+                        await MainActor.run {
+                            if modelCatalogRefreshState == .failure {
+                                modelCatalogRefreshState = .idle
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -286,7 +349,8 @@ struct FallbackScreen: View {
     @ViewBuilder
     private var modelCatalogStatusSection: some View {
         Section {
-            switch modelCatalogState {
+            Group {
+                switch modelCatalogState {
             case .idle, .loading:
                 HStack(spacing: 12) {
                     ProgressView()
@@ -330,7 +394,7 @@ struct FallbackScreen: View {
                         }
                     }
                     Button("action.retry".localized(fallback: "重试")) {
-                        Task { await refreshModelCatalog(forceRefresh: true) }
+                        triggerModelCatalogRefresh(forceRefresh: true)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -350,7 +414,7 @@ struct FallbackScreen: View {
                         }
                     }
                     Button("action.retry".localized(fallback: "重试")) {
-                        Task { await refreshModelCatalog(forceRefresh: true) }
+                        triggerModelCatalogRefresh(forceRefresh: true)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -369,11 +433,34 @@ struct FallbackScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("action.refresh".localized(fallback: "刷新")) {
-                            Task { await refreshModelCatalog(forceRefresh: true) }
+                        Button {
+                            triggerModelCatalogRefresh(forceRefresh: true)
+                        } label: {
+                            HStack(spacing: 6) {
+                                ZStack {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .opacity(modelCatalogRefreshState == .busy ? 1 : 0)
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(Color.semanticSuccess)
+                                        .scaleEffect(modelCatalogRefreshState == .success && !reduceMotion ? 1.08 : 1.0)
+                                        .opacity(modelCatalogRefreshState == .success ? 1 : 0)
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .foregroundStyle(Color.semanticDanger)
+                                        .scaleEffect(modelCatalogRefreshState == .failure && !reduceMotion ? 1.04 : 1.0)
+                                        .opacity(modelCatalogRefreshState == .failure ? 1 : 0)
+                                    Image(systemName: "arrow.clockwise")
+                                        .opacity(modelCatalogRefreshState == .idle ? 1 : 0)
+                                }
+                                .frame(width: 16, height: 16)
+                                Text("action.refresh".localized(fallback: "刷新"))
+                            }
+                            .motionAwareAnimation(feedbackPulseAnimation, value: modelCatalogRefreshState)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(modelCatalogRefreshState == .busy)
+                        .quotioHoverFeedback()
                     }
                     if fallbackData, let warning = modelCatalogErrorMessage {
                         Text(warning)
@@ -383,6 +470,8 @@ struct FallbackScreen: View {
                 }
                 .padding(.vertical, 4)
             }
+            }
+            .motionAwareAnimation(feedbackPulseAnimation, value: modelCatalogState)
         } header: {
             Label("fallback.modelCatalog".localized(fallback: "模型目录"), systemImage: "square.stack.3d.up")
         }
@@ -433,15 +522,29 @@ struct FallbackScreen: View {
 
             // Clear all button
             Button(role: .destructive) {
-                let clearedCount = fallbackSettings.activeRouteStates.count
-                fallbackSettings.clearAllRouteStates()
-                showFeedback(
-                    "fallback.feedback.routesCleared".localized(fallback: "活动路由状态已清空") + " (\(clearedCount))"
-                )
+                showClearRouteStatesConfirmation = true
             } label: {
-                Label("fallback.clearRouteStates".localized(), systemImage: "arrow.counterclockwise")
-                    .font(.subheadline)
+                HStack(spacing: 8) {
+                    ZStack {
+                        ProgressView()
+                            .controlSize(.small)
+                            .opacity(isClearingRouteStates ? 1 : 0)
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(Color.semanticSuccess)
+                            .opacity((!isClearingRouteStates && clearRouteStatesPulse) ? 1 : 0)
+                            .scaleEffect(clearRouteStatesPulse && !reduceMotion ? 1.08 : 1.0)
+                        Image(systemName: "arrow.counterclockwise")
+                            .opacity((!isClearingRouteStates && !clearRouteStatesPulse) ? 1 : 0)
+                    }
+                    .frame(width: 16, height: 16)
+                    .motionAwareAnimation(feedbackPulseAnimation, value: isClearingRouteStates)
+                    .motionAwareAnimation(feedbackPulseAnimation, value: clearRouteStatesPulse)
+                    Text("fallback.clearRouteStates".localized())
+                        .font(.subheadline)
+                }
             }
+            .disabled(isClearingRouteStates)
+            .quotioHoverFeedback()
         } header: {
             HStack {
                 Label("fallback.activeRoutes".localized(), systemImage: "arrow.triangle.swap")
@@ -539,20 +642,15 @@ struct FallbackScreen: View {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
+            feedback = item
         }
+    }
 
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
-            }
+    private func showDestructiveFeedback(_ message: String) {
+        withMotionAwareAnimation(QuotioMotion.appear, reduceMotion: reduceMotion) {
+            feedback = TopFeedbackItem.destructiveSuccess(message)
         }
     }
 }

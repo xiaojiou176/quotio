@@ -6,6 +6,54 @@ final class QuotioTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testQuotaCardTimeParserParsesChineseAndEnglishUnits() {
+        XCTAssertEqual(QuotaCardTimeParser.parseMinutes(from: "Retry after 45 minutes"), 45)
+        XCTAssertEqual(QuotaCardTimeParser.parseMinutes(from: "cooldown 2h"), 120)
+        XCTAssertEqual(QuotaCardTimeParser.parseMinutes(from: "冷却中，预计 15 分钟后恢复"), 15)
+        XCTAssertEqual(QuotaCardTimeParser.parseMinutes(from: "预计 2 小时后重试"), 120)
+        XCTAssertEqual(QuotaCardTimeParser.parseMinutes(from: "retry in 1h 30m"), 90)
+        XCTAssertEqual(QuotaCardTimeParser.parseMinutes(from: "预计 1小时30分钟后重试"), 90)
+    }
+
+    @MainActor
+    func testFocusRingPolicyDefaultsToVisibleWhenNoPreferenceExists() {
+        let suiteName = "QuotioTests.FocusRingPolicy.Default.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create isolated UserDefaults suite")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.removeObject(forKey: FocusRingPolicy.visibilityPreferenceKey)
+        XCTAssertFalse(FocusRingPolicy.disableFocusEffect(using: defaults))
+    }
+
+    @MainActor
+    func testLogsClearFeedbackResolverNormalizedErrorMessageTrimsWhitespace() {
+        XCTAssertEqual(
+            LogsClearFeedbackResolver.normalizedErrorMessage("  refresh failed  \n"),
+            "refresh failed"
+        )
+        XCTAssertNil(LogsClearFeedbackResolver.normalizedErrorMessage("   \n  "))
+    }
+
+    @MainActor
+    func testLogsClearFeedbackResolverProxyFeedbackReturnsErrorForNonEmptyRefreshError() {
+        let feedback = LogsClearFeedbackResolver.proxyFeedback(rawRefreshError: " timeout ")
+
+        XCTAssertTrue(feedback.isError)
+        XCTAssertTrue(feedback.message.localizedCaseInsensitiveContains("timeout"))
+    }
+
+    @MainActor
+    func testLogsClearFeedbackResolverRequestsFeedbackIncludesClearedCount() {
+        let feedback = LogsClearFeedbackResolver.requestsFeedback(clearedCount: 7)
+
+        XCTAssertFalse(feedback.isError)
+        XCTAssertTrue(feedback.message.contains("(7)"))
+    }
+
     func testProviderSlugNormalizationIsStable() {
         let slugs = ["Codex", "Claude", "Gemini", "Copilot"]
         let normalized = slugs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }

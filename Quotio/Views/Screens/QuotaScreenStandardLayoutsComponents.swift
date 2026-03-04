@@ -338,10 +338,7 @@ struct QuotaLoadingView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
-        .motionAwareAnimation(
-            .easeInOut(duration: 1).repeatForever(autoreverses: true),
-            value: isAnimating
-        )
+        .motionAwareAnimation(QuotioMotion.looping, value: isAnimating)
         .onAppear {
             guard !reduceMotion else { return }
             isAnimating = true

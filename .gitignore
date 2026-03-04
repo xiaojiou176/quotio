@@ -32,6 +32,7 @@ plans/
 # Local AI agent context (not shared)
 .context/
 .wallpaper-cache/
+.runtime-cache/
 
 .DS_Store
 

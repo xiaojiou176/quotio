@@ -341,19 +341,29 @@ extension UsageStatsScreen {
     var requestHistoryHeader: some View {
         HStack(spacing: 12) {
             Text("usage.stats.header.status".localized(fallback: "状态"))
-                .frame(width: 20, alignment: .leading)
+                .frame(width: UsageStatsColumnWidth.status, alignment: .leading)
             Text("usage.stats.header.time".localized(fallback: "时间"))
-                .frame(width: 60, alignment: .leading)
+                .frame(
+                    minWidth: UsageStatsColumnWidth.timeMin,
+                    idealWidth: UsageStatsColumnWidth.timeIdeal,
+                    maxWidth: UsageStatsColumnWidth.timeIdeal,
+                    alignment: .leading
+                )
             Text("usage.stats.header.model".localized(fallback: "模型"))
-                .frame(width: 150, alignment: .leading)
+                .frame(minWidth: UsageStatsColumnWidth.modelMin, alignment: .leading)
             Text("usage.stats.header.account".localized(fallback: "账号"))
-                .frame(width: 120, alignment: .leading)
+                .frame(minWidth: UsageStatsColumnWidth.accountMin, alignment: .leading)
             Text("usage.stats.header.source".localized(fallback: "来源"))
-                .frame(width: 90, alignment: .leading)
+                .frame(minWidth: UsageStatsColumnWidth.sourceMin, alignment: .leading)
             Spacer()
             Text("usage.stats.header.tokens".localized(fallback: "Token"))
             Text("usage.stats.header.requestId".localized(fallback: "请求ID"))
-                .frame(width: 100, alignment: .trailing)
+                .frame(
+                    minWidth: UsageStatsColumnWidth.requestIdMin,
+                    idealWidth: UsageStatsColumnWidth.requestIdIdeal,
+                    maxWidth: UsageStatsColumnWidth.requestIdIdeal,
+                    alignment: .trailing
+                )
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -383,6 +393,11 @@ extension UsageStatsScreen {
 
             return true
         }
+    }
+
+    var historyFilterIsActive: Bool {
+        let query = historySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return historySuccessFilter != nil || !query.isEmpty
     }
 
     func focusOnRequestHistory(_ item: RequestHistoryItem) {
@@ -425,20 +440,9 @@ extension UsageStatsScreen {
     }
 
     private func showFeedback(_ message: String, isError: Bool = false) {
-        feedbackDismissTask?.cancel()
-        feedbackIsError = isError
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedbackMessage = message
-        }
-
-        feedbackDismissTask = Task {
-            try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    feedbackMessage = nil
-                }
-            }
+        let item = isError ? TopFeedbackItem.error(message) : TopFeedbackItem.success(message)
+        withMotionAwareAnimation(TopFeedbackRhythm.pulseAnimation(reduceMotion: reduceMotion), reduceMotion: reduceMotion) {
+            feedback = item
         }
     }
 }

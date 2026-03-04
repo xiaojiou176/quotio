@@ -9,7 +9,26 @@ import SwiftUI
 
 struct ReviewQueueScreen: View {
     @Environment(QuotaViewModel.self) private var quotaViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var codexInstalled: Bool?
+    @State private var startFeedbackState: ActionFeedbackState = .idle
+    @State private var rerunFeedbackState: ActionFeedbackState = .idle
+    @State private var cancelFeedbackState: ActionFeedbackState = .idle
+    @State private var historyRefreshFeedbackState: ActionFeedbackState = .idle
+
+    private enum ActionFeedbackState: Equatable {
+        case idle
+        case busy
+        case success
+        case failure
+    }
+
+    private enum FeedbackChannel {
+        case start
+        case rerun
+        case cancel
+        case historyRefresh
+    }
 
     private var viewModel: ReviewQueueViewModel {
         quotaViewModel.reviewQueueViewModel
@@ -33,6 +52,56 @@ struct ReviewQueueScreen: View {
         .task {
             codexInstalled = await viewModel.checkCodexInstalled()
             viewModel.refreshHistory()
+        }
+        .onChange(of: viewModel.isHistoryRefreshing) { _, isRefreshing in
+            if isRefreshing {
+                historyRefreshFeedbackState = .busy
+            } else if historyRefreshFeedbackState == .busy {
+                historyRefreshFeedbackState = latestErrorMessage == nil ? .success : .failure
+                scheduleFeedbackReset(.historyRefresh)
+            }
+        }
+        .onChange(of: viewModel.isRunning) { _, isRunning in
+            if isRunning {
+                if startFeedbackState == .busy {
+                    startFeedbackState = .success
+                    scheduleFeedbackReset(.start)
+                }
+                if rerunFeedbackState == .busy {
+                    rerunFeedbackState = .success
+                    scheduleFeedbackReset(.rerun)
+                }
+                if cancelFeedbackState == .busy {
+                    cancelFeedbackState = .idle
+                }
+            } else if cancelFeedbackState == .busy {
+                cancelFeedbackState = latestErrorMessage == nil ? .success : .failure
+                scheduleFeedbackReset(.cancel)
+            }
+        }
+        .onChange(of: viewModel.isCancelling) { _, isCancelling in
+            if isCancelling {
+                cancelFeedbackState = .busy
+            }
+        }
+        .onChange(of: latestErrorMessage) { _, newValue in
+            guard newValue != nil else { return }
+            if startFeedbackState == .busy {
+                startFeedbackState = .failure
+                scheduleFeedbackReset(.start)
+            }
+            if rerunFeedbackState == .busy {
+                rerunFeedbackState = .failure
+                scheduleFeedbackReset(.rerun)
+            }
+            if cancelFeedbackState == .busy {
+                cancelFeedbackState = .failure
+                scheduleFeedbackReset(.cancel)
+            }
+            if historyRefreshFeedbackState == .busy {
+                historyRefreshFeedbackState = .failure
+                scheduleFeedbackReset(.historyRefresh)
+            }
         }
     }
 
@@ -81,9 +150,17 @@ struct ReviewQueueScreen: View {
                 }
                 .buttonStyle(.bordered)
                 Button("queue.history.refresh".localized()) {
+                    historyRefreshFeedbackState = .busy
                     viewModel.refreshHistory()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.subtle)
+                .overlay(alignment: .trailing) {
+                    actionFeedbackIcon(
+                        baseSystemImage: "arrow.clockwise",
+                        state: historyRefreshFeedbackState
+                    )
+                    .padding(.trailing, 8)
+                }
             }
             HStack(spacing: 8) {
                 if viewModel.isHistoryRefreshing {
@@ -137,6 +214,7 @@ struct ReviewQueueScreen: View {
                 .frame(minHeight: 100)
                 .font(.system(.body, design: .monospaced))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                .accessibilityLabel("queue.prompt.custom".localized(fallback: "自定义 Prompt 列表"))
                 Text(
                     "queue.prompt.plan".localizedFormat(
                         fallback: "Prompt: %d | 最大并发: %d",
@@ -171,6 +249,7 @@ struct ReviewQueueScreen: View {
                 .frame(minHeight: 90)
                 .font(.system(.body, design: .monospaced))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                .accessibilityLabel("queue.prompt.shared".localized(fallback: "共享 Review Prompt"))
             }
 
             Text("queue.aggregatePrompt".localized(fallback: "汇总去重 Prompt"))
@@ -184,6 +263,7 @@ struct ReviewQueueScreen: View {
                 .frame(minHeight: 90)
                 .font(.system(.body, design: .monospaced))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                .accessibilityLabel("queue.aggregatePrompt".localized(fallback: "汇总去重 Prompt"))
             } else {
                 Text("queue.aggregatePrompt.disabled".localized(fallback: "已关闭汇总阶段。"))
                     .font(.caption)
@@ -201,6 +281,7 @@ struct ReviewQueueScreen: View {
                 .frame(minHeight: 90)
                 .font(.system(.body, design: .monospaced))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                .accessibilityLabel("queue.fixPrompt".localized(fallback: "修复 Prompt"))
             } else {
                 Text("queue.fixPrompt.disabled".localized(fallback: "已关闭修复阶段。"))
                     .font(.caption)
@@ -259,22 +340,49 @@ struct ReviewQueueScreen: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 Button(viewModel.isRunning ? "queue.running".localized(fallback: "运行中...") : "queue.start".localized(fallback: "启动 Queue")) {
+                    startFeedbackState = .busy
                     viewModel.startRun()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(startDisabled)
+                .overlay(alignment: .trailing) {
+                    actionFeedbackIcon(
+                        baseSystemImage: "play.fill",
+                        state: startFeedbackState
+                    )
+                    .padding(.trailing, 8)
+                }
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: startFeedbackState)
 
                 Button("queue.rerunFailed".localized(fallback: "仅重跑失败项")) {
+                    rerunFeedbackState = .busy
                     viewModel.rerunFailedWorkers()
                 }
                 .buttonStyle(.bordered)
                 .disabled(viewModel.isRunning || failedWorkerCount == 0)
+                .overlay(alignment: .trailing) {
+                    actionFeedbackIcon(
+                        baseSystemImage: "arrow.triangle.2.circlepath",
+                        state: rerunFeedbackState
+                    )
+                    .padding(.trailing, 8)
+                }
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: rerunFeedbackState)
 
                 Button(viewModel.isCancelling ? "queue.cancelling".localized(fallback: "取消中...") : "action.cancel".localized(fallback: "取消")) {
+                    cancelFeedbackState = .busy
                     viewModel.cancelRun()
                 }
                 .buttonStyle(.bordered)
                 .disabled(!viewModel.isRunning)
+                .overlay(alignment: .trailing) {
+                    actionFeedbackIcon(
+                        baseSystemImage: "xmark.circle",
+                        state: cancelFeedbackState
+                    )
+                    .padding(.trailing, 8)
+                }
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: cancelFeedbackState)
             }
             if let message = viewModel.errorMessage, !message.isEmpty {
                 Text(message)
@@ -305,7 +413,14 @@ struct ReviewQueueScreen: View {
                                 .font(.caption.weight(.semibold))
                             historyPhaseBadge(item.phase)
                         }
-                        Text("Worker: \(item.workerCount) | Failed: \(item.failedWorkerCount) | Model: \(item.model ?? "-")")
+                        Text(
+                            "queue.history.statusLine".localizedFormat(
+                                fallback: "Worker 数: %d | 失败: %d | 模型: %@",
+                                item.workerCount,
+                                item.failedWorkerCount,
+                                item.model ?? "-"
+                            )
+                        )
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         HStack(spacing: 8) {
@@ -348,7 +463,7 @@ struct ReviewQueueScreen: View {
                 ProgressView(value: Double(finishedWorkerCount), total: Double(max(1, viewModel.workers.count)))
                 Text(
                     "queue.progress.summary".localizedFormat(
-                        fallback: "Done: %d/%d | Running: %d | Failed: %d",
+                        fallback: "已完成: %d/%d | 运行中: %d | 失败: %d",
                         finishedWorkerCount,
                         viewModel.workers.count,
                         runningWorkerCount,
@@ -365,7 +480,13 @@ struct ReviewQueueScreen: View {
                             .frame(width: 8, height: 8)
                             .padding(.top, 5)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Worker \(worker.id) · \(worker.status.rawValue)")
+                            Text(
+                                "queue.worker.statusLine".localizedFormat(
+                                    fallback: "Worker %d · %@",
+                                    worker.id,
+                                    workerStatusText(worker.status)
+                                )
+                            )
                                 .font(.caption.weight(.semibold))
                             Text(worker.prompt)
                                 .font(.caption)
@@ -551,8 +672,59 @@ struct ReviewQueueScreen: View {
             Button("queue.outputs.open".localized(fallback: "打开")) {
                 action()
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.rowAction)
             Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private func actionFeedbackIcon(baseSystemImage: String, state: ActionFeedbackState) -> some View {
+        ZStack {
+            SmallProgressView()
+                .opacity(state == .busy ? 1 : 0)
+            Image(systemName: "checkmark")
+                .foregroundStyle(Color.semanticSuccess)
+                .scaleEffect((state == .success && !reduceMotion) ? 1.08 : 1.0)
+                .opacity(state == .success ? 1 : 0)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.semanticDanger)
+                .scaleEffect((state == .failure && !reduceMotion) ? 1.06 : 1.0)
+                .opacity(state == .failure ? 1 : 0)
+            Image(systemName: baseSystemImage)
+                .opacity(state == .idle ? 1 : 0)
+        }
+        .frame(width: 14, height: 14)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: state)
+    }
+
+    private var latestErrorMessage: String? {
+        let trimmed = viewModel.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func scheduleFeedbackReset(_ channel: FeedbackChannel) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(TopFeedbackRhythm.pulseMilliseconds(reduceMotion: reduceMotion)))
+            await MainActor.run {
+                switch channel {
+                case .start:
+                    if startFeedbackState != .busy {
+                        startFeedbackState = .idle
+                    }
+                case .rerun:
+                    if rerunFeedbackState != .busy {
+                        rerunFeedbackState = .idle
+                    }
+                case .cancel:
+                    if cancelFeedbackState != .busy {
+                        cancelFeedbackState = .idle
+                    }
+                case .historyRefresh:
+                    if historyRefreshFeedbackState != .busy {
+                        historyRefreshFeedbackState = .idle
+                    }
+                }
+            }
         }
     }
 
@@ -614,6 +786,23 @@ struct ReviewQueueScreen: View {
 
     private func phaseText(_ phase: ReviewQueuePhase) -> String {
         "queue.phase.\(phase.rawValue)".localized()
+    }
+
+    private func workerStatusText(_ status: ReviewWorkerStatus) -> String {
+        "queue.worker.status.\(status.rawValue)".localized(fallback: workerStatusFallback(status))
+    }
+
+    private func workerStatusFallback(_ status: ReviewWorkerStatus) -> String {
+        switch status {
+        case .pending:
+            return "待执行"
+        case .running:
+            return "运行中"
+        case .completed:
+            return "已完成"
+        case .failed:
+            return "失败"
+        }
     }
 
     private func historyPhaseColor(_ phase: ReviewQueuePhase) -> Color {

@@ -22,7 +22,7 @@ extension ProvidersScreen {
                     Button("action.retry".localized()) {
                         Task { await refreshEgressMapping() }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.subtle)
                     .controlSize(.small)
                 }
             }
@@ -55,7 +55,7 @@ extension ProvidersScreen {
                                 showOnlyEgressIssues = false
                                 selectedEgressProviderFilter = egressAllProviderFilter
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.rowAction)
                             .controlSize(.small)
                         }
                     }
@@ -79,7 +79,7 @@ extension ProvidersScreen {
                     Button("action.refresh".localized()) {
                         Task { await refreshEgressMapping() }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.subtle)
                     .controlSize(.small)
                     .disabled(isRefreshingEgressMapping)
                 }
@@ -91,7 +91,7 @@ extension ProvidersScreen {
                     Button("action.refresh".localized()) {
                         Task { await refreshEgressMapping() }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.subtle)
                     .controlSize(.small)
                     .disabled(isRefreshingEgressMapping)
                 }
@@ -103,22 +103,24 @@ extension ProvidersScreen {
                 Button {
                     Task { await refreshEgressMapping() }
                 } label: {
-                    if isRefreshingEgressMapping {
-                        SmallProgressView()
-                    } else {
-                        Label("action.refresh".localized(), systemImage: "arrow.clockwise")
-                            .labelStyle(.iconOnly)
-                    }
+                    egressRefreshIndicator
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.sectionHeader)
                 .disabled(isRefreshingEgressMapping)
                 .help("providers.egress.refresh".localized())
+                .accessibilityLabel("providers.egress.refresh".localized())
+                .accessibilityHint("providers.egress.refreshHint".localized(fallback: "重新拉取出口映射状态"))
             }
         } footer: {
             Text("providers.egress.footer".localized())
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: isRefreshingEgressMapping)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: egressMappingError)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: selectedEgressProviderFilter)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: showOnlyEgressIssues)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: egressSortMode)
     }
 
     // MARK: - Helper Functions
@@ -174,6 +176,7 @@ extension ProvidersScreen {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .help("providers.egress.chip.accounts".localized())
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: selectedEgressProviderFilter)
                 Picker("providers.egress.chip.drifted".localized(), selection: $egressSortMode) {
                     ForEach(EgressSortMode.allCases) { mode in
                         Label(mode.localizedTitle, systemImage: mode.systemImage).tag(mode)
@@ -182,6 +185,7 @@ extension ProvidersScreen {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .help("providers.egress.chip.drifted".localized())
+                .motionAwareAnimation(QuotioMotion.contentSwap, value: egressSortMode)
             }
         }
     }
@@ -198,6 +202,40 @@ extension ProvidersScreen {
         .padding(.vertical, 4)
         .background(Color.secondary.opacity(0.12))
         .clipShape(Capsule())
+    }
+    @ViewBuilder
+    private var egressRefreshIndicator: some View {
+        ZStack {
+            SmallProgressView()
+                .opacity(egressRefreshState == .busy ? 1 : 0)
+            Image(systemName: "checkmark")
+                .frame(width: 16, height: 16)
+                .foregroundStyle(Color.semanticSuccess)
+                .scaleEffect(egressRefreshState == .success ? 1.06 : 1.0)
+                .opacity(egressRefreshState == .success ? 1 : 0)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .frame(width: 16, height: 16)
+                .foregroundStyle(Color.semanticDanger)
+                .scaleEffect(egressRefreshState == .failure ? 1.05 : 1.0)
+                .opacity(egressRefreshState == .failure ? 1 : 0)
+            Image(systemName: "arrow.clockwise")
+                .frame(width: 16, height: 16)
+                .opacity(egressRefreshState == .idle ? 1 : 0)
+        }
+        .frame(width: 16, height: 16)
+        .motionAwareAnimation(QuotioMotion.contentSwap, value: egressRefreshState)
+    }
+    private var egressRefreshState: RefreshFeedbackState {
+        if isRefreshingEgressMapping {
+            return .busy
+        }
+        if let error = egressMappingError, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .failure
+        }
+        if egressMapping != nil {
+            return .success
+        }
+        return .idle
     }
     @ViewBuilder
     private func egressMappingAccountRow(_ account: EgressMappingAccount, index: Int) -> some View {
@@ -247,7 +285,7 @@ extension ProvidersScreen {
                 if let status = account.consistencyStatus, !status.isEmpty {
                     Text(String(format: "providers.egress.status".localized(), localizedConsistencyStatus(status)))
                         .font(.caption2)
-                        .foregroundStyle(status.lowercased() == "ok" ? Color.secondary : Color.semanticWarning)
+                        .foregroundStyle(status.lowercased() == "ok" ? Color.semanticSuccess : Color.semanticWarning)
                 }
             }
             if !account.consistencyIssues.isEmpty {
